@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+# ROS 2 / colcon
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+ros2_ws/.colcon/
+# Arduino build
+firmware/**/build/
+# Logs and robot data
+*.bag
+*.db3
+*.mcap
+*.log
+evaluation/data/raw/
+evaluation/data/processed/
+# Generated artifacts
+docs/generated/
+hardware/generated/

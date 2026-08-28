@@ -1,6 +1,7 @@
 # ROS 2 Workspace (Jazzy)
 
 ```bash
+git submodule update --init --recursive  # pulls in sllidar_ros2, first time only
 cd ros2_ws
 colcon build --symlink-install
 source install/setup.bash
@@ -14,8 +15,10 @@ Do not commit `build/`, `install/`, or `log/` (gitignored).
   - `arduino_base` - `/cmd_vel` (Twist) -> single-char serial to the Arduino @9600; logs telemetry.
   - `cardputer_teleop` - UDP:5005 from the Cardputer -> `/cmd_vel`.
   - `safety_braking` - `/scan` three-zone monitor (0.5 stop / 1.0 slow / 2.0 warn). **Advisory only today.**
-- **`sllidar_ros2`** - vendored Slamtec RPLIDAR driver (upstream:
-  github.com/Slamtec/sllidar_ros2). Launch: `sllidar_a1_launch.py`.
+- **`sllidar_ros2`** - Slamtec RPLIDAR driver, tracked as a **git submodule**
+  (github.com/Slamtec/sllidar_ros2, pinned commit). Launch: `sllidar_a1_launch.py`.
+  To update to a newer upstream commit: `cd src/sllidar_ros2 && git checkout
+  <ref> && cd - && git add src/sllidar_ros2 && git commit`.
 
 Run examples:
 

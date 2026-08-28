@@ -60,7 +60,17 @@ Laptop + rover code is now merged into this tree:
 | --- | --- |
 | Arduino sketches (5, incl. unified production firmware) | `firmware/` |
 | ROS nodes (arduino_base, cardputer_teleop, safety_braking) | `ros2_ws/src/trolley_core/` |
-| RPLIDAR A1 driver (vendored) | `ros2_ws/src/sllidar_ros2/` |
+| RPLIDAR A1 driver (git submodule) | `ros2_ws/src/sllidar_ros2/` |
+
+## Cloning
+
+`sllidar_ros2` is a git submodule, so pull it in on clone:
+
+```bash
+git clone --recurse-submodules <repo-url>
+# or, if already cloned:
+git submodule update --init --recursive
+```
 
 ## Build and test (on the ROS 2 Jazzy target)
 

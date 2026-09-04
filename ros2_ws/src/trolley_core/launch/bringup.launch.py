@@ -24,7 +24,8 @@ def generate_launch_description():
         ),
 
         Node(package='trolley_core', executable='safety_braking',
-             name='safety_braking_node', output='screen'),
+             name='safety_braking_node', output='screen',
+             parameters=[{'bearing_offset_deg': 180.0}]),  # lidar mounted 180 deg
         Node(package='trolley_core', executable='arduino_base',
              name='arduino_base_controller', output='screen'),
         Node(package='trolley_core', executable='cardputer_teleop',

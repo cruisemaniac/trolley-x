@@ -1,72 +1,73 @@
 # Trolley-X - As-Built Wiring
 
-Source of truth for the physical prototype's electrical wiring, reconstructed
-from the build log ([../docs/build-log/](../docs/build-log/)) and bench
-verification. Where a value was measured it says so; open items are called out
-in **Known issues / open items** at the end.
+This file records the as-built electrical wiring of the prototype. It is the
+authority for all wiring questions. The content comes from the build log
+([../docs/build-log/](../docs/build-log/)) and from bench measurements. A
+measured value is marked as measured. Section 9 lists the open items.
 
 ## 1. Component inventory (electrical)
 
 | Role | Part | Notes |
 | --- | --- | --- |
-| Low-level controller | Arduino Uno R3 + Prototype Shield v5 | Screw-terminal shield so wires don't vibrate loose. A 2nd Uno R3 is spare. |
+| Low-level controller | Arduino Uno R3 + Prototype Shield v5 | Screw-terminal shield. It holds the wires so they do not vibrate loose. A second Uno R3 is a spare. |
 | Motor drivers | 2x L298N dual H-bridge | "Top" board = LEFT pair, "Bottom" board = RIGHT pair. |
-| Motors | 4x DC gear motor w/ quadrature encoder | **6 V rated**, 65 mm wheels. Front + rear per side. |
-| Onboard compute | Raspberry Pi 5 (16 GB), Ubuntu 24.04 + ROS 2 Jazzy | Hosts + powers the Arduino over USB. |
+| Motors | 4x DC gear motor w/ quadrature encoder | **6 V rated**, 65 mm wheels. Front and rear per side. |
+| Onboard compute | Raspberry Pi 5 (16 GB), Ubuntu 24.04 + ROS 2 Jazzy | Hosts and powers the Arduino over USB. |
 | LiDAR | Slamtec RPLIDAR A1 | `/scan` via sllidar_ros2. |
-| UWB | REYAX RYUW122_Lite x3 | 2 anchors on cart + 1 hand-carried tag. UART, self-contained ToF. |
-| IMU | MPU accelerometer | To be integrated (Arduino or Pi - TBD). |
-| Battery | ~11.1 V 3S pack | Reads ~11.6 V charged. Main WAGO hub distributes it. |
-| Buck | LM2596 | 11.1 V -> **5.1 V** for the Pi. Rated 3 A max (~2.4 A observed load). |
-| Removed | HW-851 USB board, relay bank | HW-851 redundant (Pi USB powers the Arduino); relays deferred. |
+| UWB | REYAX RYUW122_Lite x3 | 2 anchors on the cart. 1 tag carried by the person. UART interface. Self-contained ToF. |
+| IMU | MPU accelerometer | Not yet integrated. Host is Arduino or Pi (TBD). |
+| Battery | ~11.1 V 3S pack | Reads ~11.6 V when charged. The main WAGO hub distributes it. |
+| Buck | LM2596 | Steps 11.1 V down to **5.1 V** for the Pi. Rated 3 A maximum. Observed load ~2.4 A. |
+| Removed | HW-851 USB board, relay bank | The HW-851 is redundant because Pi USB powers the Arduino. The relays are deferred. |
 
 ## 2. Power distribution (three lanes off the WAGO hub)
 
 ```text
 Battery (~11.1 V)
    |
-   +-- Lane 1 (MUSCLE): WAGO hub --> L298N "12V" input on BOTH boards --> motors
+   +-- Lane 1 (MOTORS):  WAGO hub --> L298N "12V" input on BOTH boards --> motors
    |
-   +-- Lane 2 (BRAIN):  WAGO hub --> LM2596 (=> 5.1 V) --> Raspberry Pi 5 (5V/GND)
+   +-- Lane 2 (COMPUTE): WAGO hub --> LM2596 (=> 5.1 V) --> Raspberry Pi 5 (5V/GND)
    |
    +-- Lane 3 (SENSORS): 5.1 V lane --> RPLIDAR A1 (5 V).  (UWB is 3.3 V, off the Pi header - see section 6, NOT this lane.)
 ```
 
-Rules learned the hard way:
+Power rules:
 
-- Motors take **raw ~11.1 V** at the L298N input. The L298N's own ~2 V drop
-  (BJT VCEsat) means ~9.1 V actually reaches the motors.
-- The RPLIDAR A1 is a **5 V** part off the LM2596 5.1 V lane - never the 11.1 V
-  bus (instant death).
-- The UWB (RYUW122_Lite) is a **3.3 V** part (2.4-3.6 V; 5 V destroys it). It is
-  powered from the Pi's 3.3 V header (pin 1) and shares the Pi ground. Its UART
-  is 3.3 V logic and wires straight to the Pi UART - no level shifter (section 6).
-- The Pi 5 caps total USB power to **0.6 A** unless it sees an official 5 A
-  supply. Powering the LiDAR from Pi USB requires either that supply or an
-  external 5 V feed. Prefer feeding the LiDAR from the LM2596 lane directly.
+- The motors receive the raw ~11.1 V at the L298N input. The L298N drops about
+  2 V (BJT VCEsat). The motors therefore receive about 9.1 V.
+- The RPLIDAR A1 is a **5 V** part. Power it from the LM2596 5.1 V lane. Do not
+  connect it to the 11.1 V bus. The 11.1 V bus destroys it.
+- The UWB (RYUW122_Lite) is a **3.3 V** part (range 2.4-3.6 V). 5 V destroys it.
+  Power it from the Pi 3.3 V header (pin 1). Tie its ground to the Pi ground. Its
+  UART is 3.3 V logic. It connects to the Pi UART with no level shifter (section 6).
+- The Pi 5 limits total USB power to **0.6 A** without an official 5 A supply. To
+  power the LiDAR from Pi USB, use that supply or an external 5 V feed. Prefer to
+  power the LiDAR from the LM2596 lane.
 
 ## 3. Common ground (do not skip)
 
-All grounds must be tied or the logic signals float and motors twitch randomly:
+Tie all grounds together. Without a common ground, the logic signals float and
+the motors move without command.
 
-- L298N GND (middle pin of the 3-pin power port, the brown/-ve wire) -> negative WAGO block. Leave as-is.
-- Arduino GND header -> a free slot on the **same** negative WAGO block.
-- Encoder Black (GND) -> Arduino GND header.
+- Connect the L298N GND (the middle pin of the 3-pin power port, the brown
+  negative wire) to the negative WAGO block. Leave this as it is.
+- Connect the Arduino GND header to a free slot on the **same** negative WAGO block.
+- Connect the encoder Black wire (GND) to the Arduino GND header.
 
-Note on the L298N 3-pin power port: pin order is **+Vs, GND, +5V-out**. The
-brown negative wire correctly sits in the **middle (GND)** pin. Moving it to the
-5 V pin forces 11 V backwards through the regulator and fries the board.
+Note on the L298N 3-pin power port. The pin order is **+Vs, GND, +5V-out**. Put
+the brown negative wire in the **middle (GND)** pin. Do not move it to the 5 V
+pin. That forces 11 V back through the regulator and destroys the board.
 
 ## 4. Motor drive wiring (Arduino Uno R3)
 
-Each motor keeps its own L298N channel (do NOT parallel two motors onto one
-channel - stall current exceeds the 2 A/channel limit). The two channels on a
-board are driven **identically** by Y-cabling the logic lines, so a side moves
-as a synchronized pair.
+Each motor uses its own L298N channel. Do NOT connect two motors to one channel.
+The stall current is more than the 2 A channel limit. Y-cable the logic lines so
+both channels on a board receive the same signal. Each side then moves as a pair.
 
-Motor power: each motor's **Red / White** leads -> that motor's L298N OUT block.
+Motor power: connect each motor's **Red / White** leads to that motor's L298N OUT block.
 
-Logic (single Uno controlling both L298Ns):
+Logic (one Uno controls both L298Ns):
 
 | Signal | Arduino pin | L298N wiring |
 | --- | ---: | --- |
@@ -79,18 +80,18 @@ Logic (single Uno controlling both L298Ns):
 
 Jumper caps:
 
-- The small **5 V logic-enable caps** behind each L298N power block stay **ON**
-  (powers the driver's logic from the 11 V input).
-- The **ENA / ENB caps** come **OFF** (removed). The single control wire plugs
-  onto the **inner** Enable prong only; leave the outer 5 V prong bare.
+- Keep the small **5 V logic-enable caps** behind each L298N power block **ON**.
+  They power the driver logic from the 11 V input.
+- Remove the **ENA / ENB caps**. Plug the single control wire onto the **inner**
+  Enable prong only. Leave the outer 5 V prong bare.
 
-If a wheel spins the wrong way, don't change code - swap that motor's Red/Black
-at its L298N OUT terminal.
+If a wheel turns the wrong way, do not change the code. Swap that motor's Red and
+Black wires at its L298N OUT terminal.
 
 ## 5. Encoder wiring (front two motors only)
 
-Rear encoders are left disconnected to save interrupt pins / processing. Only
-the two front encoders feed odometry.
+The rear encoders are not connected. This saves interrupt pins and processing.
+Only the two front encoders feed odometry.
 
 Encoder wire colours (per motor datasheet):
 
@@ -103,7 +104,7 @@ Encoder wire colours (per motor datasheet):
 | Yellow | Encoder phase A (11 pulses/rev at the motor shaft) |
 | Green | Encoder phase B |
 
-Connections to the Arduino Uno (needs the 2 hardware-interrupt pins for phase A):
+Connections to the Arduino Uno. Phase A needs the two hardware-interrupt pins.
 
 | Encoder | Yellow (phase A) | Green (phase B) | Blue (5V) | Black (GND) |
 | --- | ---: | ---: | --- | --- |
@@ -112,12 +113,13 @@ Connections to the Arduino Uno (needs the 2 hardware-interrupt pins for phase A)
 
 ## 6. UWB serial + reset (Pi GPIO header)
 
-Two RYUW122_Lite anchors ride on the front pillars (RHS and LHS); each has its
-own Pi UART. The person carries a third module as the tag (not on the Pi).
+Two RYUW122_Lite anchors are mounted on the front pillars (RHS and LHS). Each
+anchor has its own Pi UART. The person carries a third module as the tag. The tag
+is not on the Pi.
 
 The RYUW122_Lite is a **3.3 V** module: supply 2.4-3.6 V (3.3 V typical), 3.3 V
-UART logic. It wires straight to the Pi's 3.3 V GPIO UART with no level shifter.
-Do NOT power it from 5 V - 5 V exceeds its 3.6 V maximum and destroys it.
+UART logic. It connects to the Pi 3.3 V GPIO UART with no level shifter. Do NOT
+power it from 5 V. 5 V is more than its 3.6 V maximum and destroys it.
 
 Module 6-pin header (datasheet): 1 VDD, 2 NRST, 3 RXD, 4 TXD, 5 PA7 (mode flag,
 high=normal / low=sleep), 6 GND.
@@ -144,37 +146,38 @@ high=normal / low=sleep), 6 GND.
 | 2 NRST | Active-low reset | **13** | GPIO27 |
 | 5 PA7 | Mode flag (out) | - | leave unconnected |
 
-- TX and RX cross over on both: module TXD -> Pi RXD, module RXD -> Pi TXD.
-- Both are Pi hardware UARTs, not USB, so they never show under
-  `/dev/serial/by-id/` (only the Arduino and the LiDAR's CP2102 bridge do), and
-  Ubuntu does not make the `/dev/serial0` alias - use the `ttyAMA*` names.
+- Cross TX and RX on both anchors: module TXD to Pi RXD, module RXD to Pi TXD.
+- Both anchors use Pi hardware UARTs, not USB. They do not appear under
+  `/dev/serial/by-id/`. Only the Arduino and the LiDAR CP2102 bridge appear there.
+  Ubuntu does not create the `/dev/serial0` alias. Use the `ttyAMA*` names.
 
 ### Boot config (`/boot/firmware/config.txt`)
 
-UART0 is the default header UART; UART2 (GPIO4/5) needs its Pi 5 overlay:
+UART0 is the default header UART. UART2 (GPIO4/5) needs its Pi 5 overlay:
 
 ```
 enable_uart=1
 dtoverlay=uart2-pi5
 ```
 
-On the Pi 5 the Bluetooth is on a separate UART, so `disable-bt` is NOT needed to
-free the header UART. Do not use `uart3-pi5` (GPIO8/9) - those pins clash with
-SPI0, which is enabled here. After boot, `sudo dmesg | grep ttyAMA` lists
-`ttyAMA0` (GPIO14/15) and `ttyAMA2` (GPIO4/5); `ttyAMA10` is the SoC debug UART,
-unrelated.
+On the Pi 5, the Bluetooth uses a separate UART. `disable-bt` is therefore NOT
+needed to free the header UART. Do not use `uart3-pi5` (GPIO8/9). Those pins
+conflict with SPI0, which is enabled here. After boot, `sudo dmesg | grep ttyAMA`
+lists `ttyAMA0` (GPIO14/15) and `ttyAMA2` (GPIO4/5). `ttyAMA10` is the SoC debug
+UART and is not related.
 
 ### Reset service
 
-NRST has no reliable internal pull-up: after boot each module stays silent until
-NRST gets a clean low->high edge, then the line must be held high. The `uwb-reset`
-service drives BOTH NRST pins (GPIO17 = RHS, GPIO27 = LHS) low->high at boot and
-holds them high - see [../scripts/uwb-reset/](../scripts/uwb-reset/).
+NRST has no reliable internal pull-up. After boot, each module stays silent until
+NRST gets a clean low-to-high edge. The line must then stay high. The `uwb-reset`
+service drives both NRST pins (GPIO17 = RHS, GPIO27 = LHS) low-to-high at boot. It
+then holds them high. See [../scripts/uwb-reset/](../scripts/uwb-reset/).
 
-Verified on hardware (Pi 5, Ubuntu 24.04): with the service running, both modules
-answer `AT` with `+OK` on `ttyAMA0` and `ttyAMA2`, no manual pulse. Note the
-RYUW122 is command-driven - it does not stream unsolicited, so a passive `cat` on
-the port shows nothing even when the module is healthy; always test with `AT`.
+Verified on hardware (Pi 5, Ubuntu 24.04). With the service running, both modules
+answer `AT` with `+OK` on `ttyAMA0` and `ttyAMA2`. No manual pulse is needed. The
+RYUW122 is command-driven. It does not send data on its own. A passive `cat` on
+the port shows nothing, even when the module is healthy. Always test with an `AT`
+command.
 
 ## 7. Measured drivetrain constants
 
@@ -182,32 +185,34 @@ the port shows nothing even when the module is healthy; always test with `AT`.
 | --- | --- | --- |
 | Wheel diameter | **65 mm** (radius 0.0325 m) | Measured. |
 | Ticks per rev (front-left) | **332** | Measured (11 PPR x gearing x edges). |
-| Ticks per rev (front-right) | **325** | Measured; slight L/R mismatch is real. |
+| Ticks per rev (front-right) | **325** | Measured. The small L/R mismatch is real. |
 | Encoder base PPR | 11 | Before gear reduction. |
 | Wheel base (track width) | **TODO - measure** | Needed for odometry/turn rate. |
-| PWM hard cap | **160 / 255** | Caps ~9.1 V rail to ~6 V for the 6 V motors. |
+| PWM hard cap | **160 / 255** | Caps the ~9.1 V rail to ~6 V for the 6 V motors. |
 
-These feed the ROS odometry params in
+These values feed the ROS odometry parameters in
 `ros2_ws/src/trolley_x_bringup/config/prototype.yaml`.
 
 ## 8. Sign convention observed
 
-Front-left: forward -> ticks count **positive**, reverse -> negative. Front-right
-is **inverted** (forward -> negative). Handle in firmware/odometry (negate the
-right encoder). Cart also veers slightly right at equal PWM - correct with a
-per-side Kp trim, not by hand-matching wires.
+Front-left encoder: forward counts **positive**, reverse counts negative.
+Front-right encoder is **inverted**: forward counts negative. Handle this in the
+firmware or odometry. Negate the right encoder count. The cart also turns slightly
+right at equal PWM. Correct this with a per-side Kp trim. Do not try to match the
+wires by hand.
 
 ## 9. Known issues / open items
 
-- **Wheel base not yet measured** - required before odometry is trustworthy.
+- **Wheel base not yet measured.** Measure it before you trust the odometry.
 - **UWB anchors verified (bring-up).** Both RHS and LHS RYUW122_Lite anchors are
-  wired, powered at 3.3 V off the Pi header, on `ttyAMA0` / `ttyAMA2`, and reset
-  at boot by the `uwb-reset` service; both answer `AT` -> `+OK`. Remaining UWB
-  work is tag config + the ranging/follow node, not the wiring.
-- **IMU (MPU) integration** undecided: Arduino I2C vs Pi I2C.
-- **6 V motors on a ~9 V rail** are only safe while the PWM cap holds - any
-  code path that writes `analogWrite(pin, 255)` will cook them. Keep MAX_PWM=160.
-- Encoder splices were hand-soldered and described as "weak" - re-sheath /
-  reinforce before sustained driving.
-- Battery chemistry label (LiFePO4 vs LiPo) inconsistent across BOM and build
-  log - confirm the actual pack.
+  wired. They are powered at 3.3 V off the Pi header. They run on `ttyAMA0` and
+  `ttyAMA2`. The `uwb-reset` service resets them at boot. Both answer `AT` with
+  `+OK`. The remaining UWB work is the tag config and the ranging/follow node,
+  not the wiring.
+- **IMU (MPU) integration not decided.** The host is Arduino I2C or Pi I2C.
+- **6 V motors on a ~9 V rail.** They are safe only while the PWM cap holds. Any
+  code that writes `analogWrite(pin, 255)` destroys them. Keep MAX_PWM=160.
+- The encoder splices are hand-soldered and weak. Re-sheath and reinforce them
+  before sustained driving.
+- The battery chemistry label (LiFePO4 or LiPo) is not consistent across the BOM
+  and the build log. Confirm the actual pack.

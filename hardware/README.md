@@ -5,5 +5,5 @@
 - [bom.md](bom.md) - proposal BOM vs as-built, plus the still-to-order list.
 - `TrolleyX_Revised_BOM.xlsx` - the funded BOM spreadsheet (academic source).
 
-To add: chassis dimensions, sensor/anchor mount positions, calibration notes,
-and exported wiring diagrams. Keep large CAD/binaries out of git.
+Still to add: chassis dimensions, sensor and anchor mount positions, calibration
+notes, and exported wiring diagrams. Keep large CAD files and binaries out of git.

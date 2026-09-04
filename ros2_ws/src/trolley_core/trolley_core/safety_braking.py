@@ -32,7 +32,8 @@ class SafetyBrakingNode(Node):
         self.declare_parameter('publish_rate_hz', 20.0)
         # Sectoring
         self.declare_parameter('front_arc_deg', 90.0)     # width of FRONT and REAR arcs
-        self.declare_parameter('bearing_offset_deg', 0.0)  # lidar 0 -> cart forward
+        self.declare_parameter('bearing_offset_deg', 0.0)  # rotate: lidar 0 -> cart forward
+        self.declare_parameter('invert_scan', False)       # negate beam angle for a flipped/reversed mount
 
         g = lambda n: self.get_parameter(n).value
         self.stop_d = g('stop_distance_m')
@@ -46,6 +47,7 @@ class SafetyBrakingNode(Node):
         self.cmd_timeout = g('command_timeout_s')
         self.half_front = math.radians(float(g('front_arc_deg')) / 2.0)
         self.bearing_offset = math.radians(float(g('bearing_offset_deg')))
+        self.invert_scan = bool(g('invert_scan'))
 
         self.sect = {'FRONT': float('inf'), 'REAR': float('inf'),
                      'LEFT': float('inf'), 'RIGHT': float('inf')}
@@ -101,7 +103,8 @@ class SafetyBrakingNode(Node):
             y = r * math.sin(angle)
             if (x_min < x < x_max) and (y_min < y < y_max):
                 continue  # ignore the cart's own footprint
-            bearing = self._wrap(angle - self.bearing_offset)
+            raw = -angle if self.invert_scan else angle
+            bearing = self._wrap(raw + self.bearing_offset)
             sect = self._sector(bearing)
             if sect == 'FRONT' and r < front:
                 front = r

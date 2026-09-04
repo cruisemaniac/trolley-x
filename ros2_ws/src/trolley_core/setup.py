@@ -29,6 +29,7 @@ setup(
             'cardputer_teleop = trolley_core.cardputer_teleop:main',
             'arduino_base = trolley_core.arduino_base_controller:main',
             'safety_braking = trolley_core.safety_braking:main',
+            'uwb_ranging = trolley_core.uwb_ranging:main',
         ],
     },
 )

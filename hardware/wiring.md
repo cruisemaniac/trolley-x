@@ -29,19 +29,21 @@ Battery (~11.1 V)
    |
    +-- Lane 2 (BRAIN):  WAGO hub --> LM2596 (=> 5.1 V) --> Raspberry Pi 5 (5V/GND)
    |
-   +-- Lane 3 (SENSORS): 5.1 V lane --> RPLIDAR A1 + UWB modules (5 V, NOT 11 V, NOT Pi 3.3 V)
+   +-- Lane 3 (SENSORS): 5.1 V lane --> RPLIDAR A1 (5 V).  (UWB is 3.3 V, off the Pi header - see section 6, NOT this lane.)
 ```
 
 Rules learned the hard way:
 
 - Motors take **raw ~11.1 V** at the L298N input. The L298N's own ~2 V drop
   (BJT VCEsat) means ~9.1 V actually reaches the motors.
-- LiDAR and UWB are **5 V** parts. They must come off the LM2596 5.1 V lane -
-  never the 11.1 V bus (instant death) and never the Pi's 3.3 V rail (rail sag
-  breaks the UWB UART).
+- The RPLIDAR A1 is a **5 V** part off the LM2596 5.1 V lane - never the 11.1 V
+  bus (instant death).
+- The UWB (RYUW122_Lite) is a **3.3 V** part (2.4-3.6 V; 5 V destroys it). It is
+  powered from the Pi's 3.3 V header (pin 1) and shares the Pi ground. Its UART
+  is 3.3 V logic and wires straight to the Pi UART - no level shifter (section 6).
 - The Pi 5 caps total USB power to **0.6 A** unless it sees an official 5 A
-  supply. Powering LiDAR/UWB from Pi USB requires either that supply or an
-  external 5 V feed. Prefer feeding sensors from the LM2596 lane directly.
+  supply. Powering the LiDAR from Pi USB requires either that supply or an
+  external 5 V feed. Prefer feeding the LiDAR from the LM2596 lane directly.
 
 ## 3. Common ground (do not skip)
 
@@ -108,7 +110,73 @@ Connections to the Arduino Uno (needs the 2 hardware-interrupt pins for phase A)
 | Front-left | **Pin 2** (INT0) | **Pin 4** | 5V header | GND header |
 | Front-right | **Pin 3** (INT1) | **Pin 11** | 5V header | GND header |
 
-## 6. Measured drivetrain constants
+## 6. UWB serial + reset (Pi GPIO header)
+
+Two RYUW122_Lite anchors ride on the front pillars (RHS and LHS); each has its
+own Pi UART. The person carries a third module as the tag (not on the Pi).
+
+The RYUW122_Lite is a **3.3 V** module: supply 2.4-3.6 V (3.3 V typical), 3.3 V
+UART logic. It wires straight to the Pi's 3.3 V GPIO UART with no level shifter.
+Do NOT power it from 5 V - 5 V exceeds its 3.6 V maximum and destroys it.
+
+Module 6-pin header (datasheet): 1 VDD, 2 NRST, 3 RXD, 4 TXD, 5 PA7 (mode flag,
+high=normal / low=sleep), 6 GND.
+
+### RHS anchor -> UART0 (`/dev/ttyAMA0`)
+
+| UWB pin | Signal | Pi physical pin | Pi function |
+| --- | --- | ---: | --- |
+| 1 VDD | 3.3 V power | **1** | 3V3 |
+| 6 GND | Ground | **14** | GND |
+| 4 TXD | UART out | **10** | GPIO15 / RXD0 |
+| 3 RXD | UART in | **8** | GPIO14 / TXD0 |
+| 2 NRST | Active-low reset | **11** | GPIO17 |
+| 5 PA7 | Mode flag (out) | - | leave unconnected |
+
+### LHS anchor -> UART2 (`/dev/ttyAMA2`)
+
+| UWB pin | Signal | Pi physical pin | Pi function |
+| --- | --- | ---: | --- |
+| 1 VDD | 3.3 V power | **17** | 3V3 |
+| 6 GND | Ground | **25** | GND |
+| 4 TXD | UART out | **29** | GPIO5 / RXD2 |
+| 3 RXD | UART in | **7** | GPIO4 / TXD2 |
+| 2 NRST | Active-low reset | **13** | GPIO27 |
+| 5 PA7 | Mode flag (out) | - | leave unconnected |
+
+- TX and RX cross over on both: module TXD -> Pi RXD, module RXD -> Pi TXD.
+- Both are Pi hardware UARTs, not USB, so they never show under
+  `/dev/serial/by-id/` (only the Arduino and the LiDAR's CP2102 bridge do), and
+  Ubuntu does not make the `/dev/serial0` alias - use the `ttyAMA*` names.
+
+### Boot config (`/boot/firmware/config.txt`)
+
+UART0 is the default header UART; UART2 (GPIO4/5) needs its Pi 5 overlay:
+
+```
+enable_uart=1
+dtoverlay=uart2-pi5
+```
+
+On the Pi 5 the Bluetooth is on a separate UART, so `disable-bt` is NOT needed to
+free the header UART. Do not use `uart3-pi5` (GPIO8/9) - those pins clash with
+SPI0, which is enabled here. After boot, `sudo dmesg | grep ttyAMA` lists
+`ttyAMA0` (GPIO14/15) and `ttyAMA2` (GPIO4/5); `ttyAMA10` is the SoC debug UART,
+unrelated.
+
+### Reset service
+
+NRST has no reliable internal pull-up: after boot each module stays silent until
+NRST gets a clean low->high edge, then the line must be held high. The `uwb-reset`
+service drives BOTH NRST pins (GPIO17 = RHS, GPIO27 = LHS) low->high at boot and
+holds them high - see [../scripts/uwb-reset/](../scripts/uwb-reset/).
+
+Verified on hardware (Pi 5, Ubuntu 24.04): with the service running, both modules
+answer `AT` with `+OK` on `ttyAMA0` and `ttyAMA2`, no manual pulse. Note the
+RYUW122 is command-driven - it does not stream unsolicited, so a passive `cat` on
+the port shows nothing even when the module is healthy; always test with `AT`.
+
+## 7. Measured drivetrain constants
 
 | Constant | Value | Notes |
 | --- | --- | --- |
@@ -122,19 +190,20 @@ Connections to the Arduino Uno (needs the 2 hardware-interrupt pins for phase A)
 These feed the ROS odometry params in
 `ros2_ws/src/trolley_x_bringup/config/prototype.yaml`.
 
-## 7. Sign convention observed
+## 8. Sign convention observed
 
 Front-left: forward -> ticks count **positive**, reverse -> negative. Front-right
 is **inverted** (forward -> negative). Handle in firmware/odometry (negate the
 right encoder). Cart also veers slightly right at equal PWM - correct with a
 per-side Kp trim, not by hand-matching wires.
 
-## 8. Known issues / open items
+## 9. Known issues / open items
 
 - **Wheel base not yet measured** - required before odometry is trustworthy.
-- **UWB power feed** not yet wired - needs a 5 V tap off the LM2596 lane (or a
-  small dedicated buck) sized for anchors + tag; confirm against the LM2596's
-  remaining 3 A headroom after the Pi.
+- **UWB anchors verified (bring-up).** Both RHS and LHS RYUW122_Lite anchors are
+  wired, powered at 3.3 V off the Pi header, on `ttyAMA0` / `ttyAMA2`, and reset
+  at boot by the `uwb-reset` service; both answer `AT` -> `+OK`. Remaining UWB
+  work is tag config + the ranging/follow node, not the wiring.
 - **IMU (MPU) integration** undecided: Arduino I2C vs Pi I2C.
 - **6 V motors on a ~9 V rail** are only safe while the PWM cap holds - any
   code path that writes `analogWrite(pin, 255)` will cook them. Keep MAX_PWM=160.

@@ -1,0 +1,11 @@
+[Unit]
+Description=RYUW122 UWB power-on reset (pulse NRST, then hold high)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/trolley-x/uwb_reset.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

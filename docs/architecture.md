@@ -24,27 +24,26 @@ See [../hardware/wiring.md](../hardware/wiring.md) for the electrical detail.
 ## Control flow - current vs target
 
 ```text
-CURRENT (open loop, no automatic braking):
-  Cardputer --UDP:5005--> cardputer_teleop --/cmd_vel--> arduino_base --serial--> Arduino --> L298N --> motors
-  RPLIDAR --/scan--> safety_braking  (LOGS zones only; does not act)
-  Arduino --CSV telemetry--> arduino_base  (logged, not turned into /odom)
+CURRENT (safety in the loop):
+  Cardputer --UDP:5005--> cardputer_teleop --/motion_request--> safety_braking --/cmd_vel--> arduino_base --serial--> Arduino --> L298N --> motors
+  RPLIDAR --/scan--> safety_braking  (clear/warn/slow/stop + fail-safe)
+  Arduino --CSV telemetry--> arduino_base  (logged, not yet turned into /odom)
 
 TARGET:
   motion sources --/motion_request--> safety_braking (limits) --/cmd_vel--> arduino_base --> Arduino
   Arduino telemetry --> /odom ; UWB --> follow controller --> /motion_request
 ```
 
-## Safety gap (top priority)
+## Safety (closed the gap)
 
-`safety_braking` observes `/scan` and prints warn/slow/stop, but nothing consumes
-its verdict - the cart will not stop itself. Closing this means putting the
-safety node **between** the motion source and `arduino_base`: teleop/follow
-publish a raw request, safety republishes a limited `/cmd_vel`, and only that
-reaches the Arduino. This must land before any UWB following is enabled.
+`safety_braking` now sits between motion sources and `arduino_base`: teleop (and
+later the follower) publish `/motion_request`, safety fuses that with `/scan` and
+republishes the limited `/cmd_vel`, and only that reaches the Arduino. STOP is
+enforced now; SLOW becomes physical once the firmware accepts a speed value.
 
 ## Development order
 
-1. Close the safety gap (safety intercepts commands, real stop).
+1. DONE: safety intercepts commands (real stop).
 2. Parse Arduino CSV telemetry into `/odom` (65 mm wheels, TPR 332/325).
 3. Bringup launch (lidar + safety + base together).
 4. UWB read + Kalman follow (on RYUW122 arrival).

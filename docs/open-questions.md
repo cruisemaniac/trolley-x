@@ -4,10 +4,13 @@
 - IMU location: **Arduino** (MPU6050 over I2C, in the unified firmware).
 - Right-encoder sign: handled in firmware ISR (inverted vs left).
 - Serial protocol: single-char W/A/S/D/X @ 9600 + CSV telemetry (not V/ENC).
+- Safety architecture: motion sources -> `/motion_request` -> safety -> `/cmd_vel`.
 
 ## Priority / safety
-- **Close the safety gap:** `safety_braking` only logs - make it intercept
-  `/cmd_vel` so the cart actually stops. Blocks enabling follow mode.
+- DONE: safety gap closed - `safety_braking` now fuses `/scan` + `/motion_request`
+  and republishes a limited `/cmd_vel` (clear/warn/slow/stop + fail-safe).
+- SLOW zone needs variable-speed firmware to physically slow (bang-bang today);
+  STOP is fully enforced. Fold this into the firmware handoff for Shalaby.
 - **Cap turn PWM at 160** for the 6 V motors (turns/teleop currently hit 200-255).
 - **Measure the wheel track width** - needed before `/odom` is trustworthy.
 - **UWB 5 V feed** off the LM2596 lane (confirm 3 A headroom after the Pi).

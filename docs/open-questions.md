@@ -9,6 +9,8 @@
 - Safety is sectorized and directional (front/rear/left/right); bringup launch done.
 - LiDAR mount: the RPLIDAR is mounted flipped; safety uses `invert_scan` +
   `bearing_offset_deg=180` to map beams to the cart frame.
+- Odometry: `arduino_base` publishes gyro-aided `/odom` + `/imu/data` + TF.
+- Follow controller: `follow_controller` drives `/motion_request` from `/uwb/*`.
 
 ## Priority / safety
 - **Power (blocking for mobile):** the Pi 5 browns out on the shared LM2596 lane
@@ -19,15 +21,16 @@
 - SLOW zone needs variable-speed firmware to physically slow (bang-bang today);
   STOP is fully enforced. Fold into the firmware handoff for Shalaby.
 - **Cap turn PWM at 160** for the 6 V motors (turns/teleop currently hit 200-255).
-- **Measure the wheel track width** - needed before `/odom` is trustworthy.
+- Wheel track width no longer gates `/odom` heading (gyro-aided); measure it only
+  to add wheel-derived yaw as an IMU cross-check.
 - **Re-validate the cart-footprint box** for the flipped lidar mount.
 
 ## ROS / software
-- Parse Arduino CSV telemetry into a real `/odom` publisher + TF.
-- DONE: bringup launch (lidar + safety + base + teleop).
-- DONE: `uwb_ranging` reads both anchors and publishes `/uwb/left`, `/uwb/right`.
-- NEXT: ESP32 tag firmware (RYUW122 tag config + power) and the Kalman follow
-  controller (`/uwb/*` -> `/motion_request`).
+- DONE: gyro-aided `/odom` + `/imu/data` from the Arduino telemetry, with TF.
+- DONE: bringup + follow launches; `uwb_ranging`; ESP32 tag firmware.
+- DONE: `follow_controller` (`/uwb/*` -> `/motion_request`).
+- NEXT: localisation EKF fusing UWB + odom + IMU (the "Kalman follow"); it replaces
+  the raw differential follow and corrects gyro drift.
 - `/cmd_vel` -> serial now sends `<dir> <pwm>`; still mutually exclusive (no
   simultaneous drive + turn).
 

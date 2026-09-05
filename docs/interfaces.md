@@ -13,6 +13,8 @@ Contracts reflect the actual code in `firmware/` and
 | Safety state | `/safety/state` | `std_msgs/String` | `safety_braking` -> telemetry / evaluation |
 | UWB range (right anchor) | `/uwb/right` | `sensor_msgs/Range` | `uwb_ranging` -> follow controller / eval |
 | UWB range (left anchor) | `/uwb/left` | `sensor_msgs/Range` | `uwb_ranging` -> follow controller / eval |
+| IMU | `/imu/data` | `sensor_msgs/Imu` | `arduino_base_controller` -> localization / eval |
+| Odometry | `/odom` | `nav_msgs/Odometry` | `arduino_base_controller` -> localization / eval |
 
 Safety sits in the command path: every motion source publishes `/motion_request`,
 and only `safety_braking` publishes `/cmd_vel`.
@@ -85,12 +87,27 @@ Operator tag (set once, e.g. from the ESP32): `AT+MODE=0`,
 - Pi -> Arduino: `<dir> <pwm>` per line from `/cmd_vel` - `W`/`S` forward/reverse,
   `A`/`D` left/right spin, `X` stop. PWM is scaled from the velocity magnitude and
   capped at 160. (Firmware is bang-bang today and ignores the PWM value.)
-- Arduino -> Pi (unified firmware, 20 Hz): CSV `left_m,right_m,accel_x,gyro_z`
-  (logged today; not yet parsed into `/odom`).
+- Arduino -> Pi (unified firmware, 20 Hz): CSV `left_m,right_m,accel_x,gyro_z`,
+  parsed into `/odom` + `/imu/data` (see Odometry & IMU below).
+
+## Odometry & IMU (`arduino_base_controller`)
+
+The base controller also parses the telemetry and publishes:
+
+- `/imu/data` (`sensor_msgs/Imu`): `angular_velocity.z` = gyro yaw rate (rad/s),
+  `linear_acceleration.x` = forward accel (m/s^2); orientation not provided.
+- `/odom` (`nav_msgs/Odometry`) + the `odom -> base_link` TF.
+
+Odometry is gyro-aided: distance from the wheel encoders, heading integrated from
+the gyro (not the wheel difference), so it needs no track width and tolerates
+skid-steer slip. The gyro bias is averaged from a stationary startup window
+(`gyro_bias_samples`, ~3 s) - keep the cart still until "gyro bias calibrated".
+Heading still drifts slowly; the localisation EKF (UWB + odom + IMU) corrects it.
+Set `publish_odom_tf=False` once an EKF owns `odom -> base_link`.
 
 ## Known interface gaps
 
-- No `/odom` publisher yet (telemetry is logged, not parsed).
 - SLOW zone needs variable-speed firmware to take physical effect.
-- Follow controller and ESP32 tag firmware not implemented yet.
+- `/odom` heading drifts on the raw gyro; the localisation EKF (UWB + odom + IMU)
+  is not built yet.
 - Cart-footprint box needs re-validation for the flipped lidar mount.

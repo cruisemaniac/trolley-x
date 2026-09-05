@@ -31,7 +31,7 @@ CURRENT (safety in the loop, sectorized):
   Cardputer --UDP:5005--> cardputer_teleop --/motion_request--> safety_braking --/cmd_vel--> arduino_base --serial--> Arduino --> L298N --> motors
   RPLIDAR --/scan--> safety_braking  (4 sectors, directional; clear/warn/slow/stop + fail-safe)
   UWB anchors --serial--> uwb_ranging --/uwb/left,/uwb/right-->  (follow controller, planned)
-  Arduino --CSV telemetry--> arduino_base  (logged, not yet turned into /odom)
+  Arduino --CSV telemetry--> arduino_base  (parsed into /odom + /imu/data)
 
 TARGET:
   UWB --> follow controller --/motion_request--> safety_braking (limits) --/cmd_vel--> arduino_base --> Arduino
@@ -57,11 +57,11 @@ frame (front/back and left/right both correct).
 ## Development order
 
 1. DONE: safety intercepts commands (real stop).
-2. Parse Arduino CSV telemetry into `/odom` (65 mm wheels, TPR 332/325).
+2. DONE: gyro-aided `/odom` + `/imu/data` from telemetry (65 mm wheels, TPR 332/325).
 3. DONE: bringup launch (lidar + safety + base + teleop).
 4. DONE: sectorized directional safety with bearing.
-5. UWB: driver reads both anchors (`/uwb/*`) DONE; ESP32 tag firmware + Kalman
-   follow next.
+5. UWB driver + ESP32 tag + `follow_controller` DONE; localisation EKF (UWB +
+   odom + IMU) next.
 6. Integrated follow + safety trials; evaluation + sim-to-real comparison.
 
 ## Non-goals

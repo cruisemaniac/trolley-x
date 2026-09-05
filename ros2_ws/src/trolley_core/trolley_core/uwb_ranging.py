@@ -117,8 +117,14 @@ class UwbRanging(Node):
         if a['cal'] != 0:
             cmds.append(f"AT+CAL={a['cal']}")
         for c in cmds:
-            if not self._send_expect_ok(a['serial'], c):
+            ok = self._send_expect_ok(a['serial'], c)
+            if not ok:
+                time.sleep(0.3)                    # module may still be settling
+                ok = self._send_expect_ok(a['serial'], c)
+            if not ok:
                 self.get_logger().warn(f"{a['name']}: '{c}' gave no +OK")
+            if c.startswith('AT+MODE'):
+                time.sleep(0.3)                    # a mode change needs a beat before the next cmd
 
     def _parse_distance_m(self, line):
         # +ANCHOR_RCV=<addr>,<len>,<data>,<DISTANCE cm>,<RSSI>

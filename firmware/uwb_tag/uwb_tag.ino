@@ -5,8 +5,9 @@
 // ---- Config (must match the ROS uwb_ranging node) ----
 #define UWB_SERIAL   Serial2
 #define UWB_BAUD     115200      // RYUW122 default; try 9600 if it never answers
-#define UWB_RX_PIN   25          // ESP32 receives; wire to RYUW122 TX
-#define UWB_TX_PIN   26          // ESP32 transmits; wire to RYUW122 RX
+#define UWB_RX_PIN   25          // ESP32 receives; wire to RYUW122 TXD
+#define UWB_TX_PIN   26          // ESP32 transmits; wire to RYUW122 RXD
+#define UWB_RST_PIN  27          // RYUW122 NRST - pulsed low->high, then held high
 
 #define TAG_ADDRESS  "TAG00001"
 #define NETWORK_ID   "TROLLEYX"
@@ -18,6 +19,8 @@
 
 #define KEEPALIVE_MS 3000UL      // link-check period
 #define AT_TIMEOUT_MS 600UL      // per-command reply wait
+#define RST_HOLD_MS  150UL       // NRST assert time (matches the Pi reset service)
+#define RST_BOOT_MS  400UL       // wait after release before talking
 
 // ---- helpers ----
 static String readReply(uint32_t timeout) {
@@ -42,6 +45,15 @@ static bool sendAT(const char* cmd, uint32_t timeout = AT_TIMEOUT_MS) {
   return r.indexOf("+OK") >= 0;
 }
 
+// Pulse NRST low->high and hold high. The module is mute until this edge.
+static void resetModule() {
+  pinMode(UWB_RST_PIN, OUTPUT);
+  digitalWrite(UWB_RST_PIN, LOW);    // assert reset
+  delay(RST_HOLD_MS);
+  digitalWrite(UWB_RST_PIN, HIGH);   // release and hold high
+  delay(RST_BOOT_MS);                // let the module boot
+}
+
 static bool configureTag() {
   bool ok = true;
   ok &= sendAT("AT+MODE=0");                 // 0 = TAG
@@ -49,8 +61,14 @@ static bool configureTag() {
   ok &= sendAT("AT+ADDRESS=" TAG_ADDRESS);
   if (strlen(CPIN) > 0) ok &= sendAT("AT+CPIN=" CPIN);
   DBG.println(ok ? "[tag] configured OK"
-                 : "[tag] CONFIG FAILED - check wiring/baud/pins");
+                 : "[tag] CONFIG FAILED - check wiring/baud/pins/NRST");
   return ok;
+}
+
+// Reset then configure. Use at boot and on every recovery.
+static bool bringUp() {
+  resetModule();
+  return configureTag();
 }
 
 static bool linkAlive() {
@@ -68,18 +86,20 @@ void setup() {
 #if STATUS_LED >= 0
   pinMode(STATUS_LED, OUTPUT);
 #endif
+  pinMode(UWB_RST_PIN, OUTPUT);
+  digitalWrite(UWB_RST_PIN, HIGH);   // idle high until the first reset pulse
   delay(200);
   DBG.println("\n[tag] Trolley-X UWB tag booting");
   UWB_SERIAL.begin(UWB_BAUD, SERIAL_8N1, UWB_RX_PIN, UWB_TX_PIN);
   delay(100);
 
   uint8_t tries = 0;
-  while (!configureTag()) {
+  while (!bringUp()) {               // reset + configure, retry until it answers
     setLed(false);
-    DBG.println("[tag] retrying config in 1 s...");
+    DBG.println("[tag] retrying (reset+config) in 1 s...");
     delay(1000);
     if (++tries >= 10) {
-      DBG.println("[tag] still failing - continuing to keep-alive");
+      DBG.println("[tag] still failing - check NRST wiring (GPIO27) and baud");
       break;
     }
   }
@@ -98,9 +118,9 @@ void loop() {
     if (linkAlive()) {
       led = !led; setLed(led);                // heartbeat: link OK
     } else {
-      DBG.println("[tag] link lost - reconfiguring");
+      DBG.println("[tag] link lost - resetting + reconfiguring");
       setLed(false);
-      configureTag();
+      bringUp();                              // re-pulse NRST, then reconfigure
     }
   }
 }

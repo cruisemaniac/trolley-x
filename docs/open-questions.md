@@ -23,14 +23,17 @@
 - **Cap turn PWM at 160** for the 6 V motors (turns/teleop currently hit 200-255).
 - Wheel track width no longer gates `/odom` heading (gyro-aided); measure it only
   to add wheel-derived yaw as an IMU cross-check.
+- **Measure the anchor geometry** (`anchor_x`, `anchor_baseline`) for the EKF; a
+  wider baseline sharpens the tag bearing (0.30 m at ~2 m is weak).
 - **Re-validate the cart-footprint box** for the flipped lidar mount.
 
 ## ROS / software
 - DONE: gyro-aided `/odom` + `/imu/data` from the Arduino telemetry, with TF.
 - DONE: bringup + follow launches; `uwb_ranging`; ESP32 tag firmware.
-- DONE: `follow_controller` (`/uwb/*` -> `/motion_request`).
-- NEXT: localisation EKF fusing UWB + odom + IMU (the "Kalman follow"); it replaces
-  the raw differential follow and corrects gyro drift.
+- DONE: `follow_controller` (`/uwb/*` -> `/motion_request`), raw + EKF-target modes.
+- DONE: `uwb_localizer` EKF fuses UWB + odom into `/follow/target` (Kalman follow).
+- NEXT: field-tune the EKF (anchor geometry, noise) and integrated follow + safety
+  trials for the evaluation.
 - `/cmd_vel` -> serial now sends `<dir> <pwm>`; still mutually exclusive (no
   simultaneous drive + turn).
 

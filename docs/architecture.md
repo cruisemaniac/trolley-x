@@ -30,12 +30,12 @@ vendored `sllidar_ros2`. See [../ros2_ws/src/README.md](../ros2_ws/src/README.md
 CURRENT (safety in the loop, sectorized):
   Cardputer --UDP:5005--> cardputer_teleop --/motion_request--> safety_braking --/cmd_vel--> arduino_base --serial--> Arduino --> L298N --> motors
   RPLIDAR --/scan--> safety_braking  (4 sectors, directional; clear/warn/slow/stop + fail-safe)
-  UWB anchors --serial--> uwb_ranging --/uwb/left,/uwb/right-->  (follow controller, planned)
+  UWB anchors --serial--> uwb_ranging --/uwb/*--> uwb_localizer(EKF,+/odom) --/follow/target--> follow_controller --/motion_request--> safety_braking
   Arduino --CSV telemetry--> arduino_base  (parsed into /odom + /imu/data)
 
-TARGET:
-  UWB --> follow controller --/motion_request--> safety_braking (limits) --/cmd_vel--> arduino_base --> Arduino
-  Arduino telemetry --> /odom
+TARGET (built):
+  UWB + /odom --> uwb_localizer(EKF) --> follow_controller --/motion_request--> safety_braking --> arduino_base
+  Remaining: field-tune the EKF + evaluation trials.
 ```
 
 ## Safety (sectorized, directional)
@@ -60,9 +60,10 @@ frame (front/back and left/right both correct).
 2. DONE: gyro-aided `/odom` + `/imu/data` from telemetry (65 mm wheels, TPR 332/325).
 3. DONE: bringup launch (lidar + safety + base + teleop).
 4. DONE: sectorized directional safety with bearing.
-5. UWB driver + ESP32 tag + `follow_controller` DONE; localisation EKF (UWB +
-   odom + IMU) next.
-6. Integrated follow + safety trials; evaluation + sim-to-real comparison.
+5. DONE: UWB driver + ESP32 tag + `follow_controller` + `uwb_localizer` EKF
+   (fused `/follow/target`, Kalman follow).
+6. Field-tune the EKF, then integrated follow + safety trials; evaluation +
+   sim-to-real comparison.
 
 ## Non-goals
 

@@ -15,6 +15,8 @@ Contracts reflect the actual code in `firmware/` and
 | UWB range (left anchor) | `/uwb/left` | `sensor_msgs/Range` | `uwb_ranging` -> follow controller / eval |
 | IMU | `/imu/data` | `sensor_msgs/Imu` | `arduino_base_controller` -> localization / eval |
 | Odometry | `/odom` | `nav_msgs/Odometry` | `arduino_base_controller` -> localization / eval |
+| Fused tag (base_link) | `/follow/target` | `geometry_msgs/PointStamped` | `uwb_localizer` -> `follow_controller` |
+| Fused tag (odom) | `/uwb/tag_odom` | `geometry_msgs/PointStamped` | `uwb_localizer` -> RViz / eval |
 
 Safety sits in the command path: every motion source publishes `/motion_request`,
 and only `safety_braking` publishes `/cmd_vel`.
@@ -105,9 +107,29 @@ skid-steer slip. The gyro bias is averaged from a stationary startup window
 Heading still drifts slowly; the localisation EKF (UWB + odom + IMU) corrects it.
 Set `publish_odom_tf=False` once an EKF owns `odom -> base_link`.
 
+## Follow: localizer + controller
+
+`uwb_localizer` is an EKF. It fuses the two anchor ranges with `/odom` into a
+smooth tag position - state `[px, py, vx, vy]` in the odom frame, constant-
+velocity operator model, one update per (time-multiplexed) range, an innovation
+gate for outliers. It publishes the tag in base_link on `/follow/target` and in
+odom on `/uwb/tag_odom`. Set the anchor geometry - `anchor_x` (forward offset)
+and `anchor_baseline` (left-right separation); a wider baseline sharpens bearing.
+
+`follow_controller` turns a tag position + a stand-off into `/motion_request`:
+
+- `use_target=False` (node default): raw differential ranging on `/uwb/left`,
+  `/uwb/right` - steer on `d_right - d_left`, speed on the mean range.
+- `use_target=True` (set by `follow.launch`): consume `/follow/target` and steer
+  on the true bearing + range from the EKF - smoother, and rides through UWB
+  dropouts. This is the "Kalman follow".
+
+Both turn toward the tag, hold forward until roughly aligned, keep the stand-off,
+and stop on stale input. Motion still passes through `safety_braking`.
+
 ## Known interface gaps
 
 - SLOW zone needs variable-speed firmware to take physical effect.
-- `/odom` heading drifts on the raw gyro; the localisation EKF (UWB + odom + IMU)
-  is not built yet.
+- Anchor geometry (`anchor_x`, `anchor_baseline`) must be measured for the EKF;
+  a wider baseline improves bearing accuracy (small baseline = weak bearing).
 - Cart-footprint box needs re-validation for the flipped lidar mount.

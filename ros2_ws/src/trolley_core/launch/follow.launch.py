@@ -30,6 +30,9 @@ def generate_launch_description():
              name='arduino_base_controller', output='screen'),
         Node(package='trolley_core', executable='uwb_ranging',
              name='uwb_ranging', output='screen'),
+        Node(package='trolley_core', executable='uwb_localizer',
+             name='uwb_localizer', output='screen'),
         Node(package='trolley_core', executable='follow_controller',
-             name='follow_controller', output='screen'),
+             name='follow_controller', output='screen',
+             parameters=[{'use_target': True}]),
     ])

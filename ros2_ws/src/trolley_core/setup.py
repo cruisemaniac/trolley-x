@@ -31,6 +31,7 @@ setup(
             'safety_braking = trolley_core.safety_braking:main',
             'uwb_ranging = trolley_core.uwb_ranging:main',
             'follow_controller = trolley_core.follow_controller:main',
+            'uwb_localizer = trolley_core.uwb_localizer:main',
         ],
     },
 )

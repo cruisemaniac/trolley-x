@@ -45,7 +45,7 @@ class FollowController(Node):
         self.declare_parameter('max_linear_mps', 0.4)
         self.declare_parameter('max_angular_rps', 1.0)
         self.declare_parameter('turn_first_rad', 1.2)       # far off to the side => turn first, only creep forward
-        self.declare_parameter('creep_frac', 0.3)           # forward fraction while turning hard
+        self.declare_parameter('creep_frac', 0.5)           # forward fraction while turning hard (keeps an arc)
         self.declare_parameter('bearing_deadband_rad', 0.09)  # ignore bearing under ~5 deg (kills hunting)
         self.declare_parameter('raw_diff_deadband_m', 0.10)   # raw mode: ignore small L-R diff
         self.declare_parameter('allow_reverse', False)

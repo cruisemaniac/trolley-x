@@ -37,8 +37,9 @@ class FollowController(Node):
         self.declare_parameter('right_topic', '/uwb/right')
         self.declare_parameter('target_topic', '/follow/target')
         self.declare_parameter('output_topic', '/motion_request')
-        self.declare_parameter('standoff_m', 0.45)      # follow gap (mean anchor range, m)
+        self.declare_parameter('standoff_m', 0.45)      # follow gap to the front anchors (m)
         self.declare_parameter('deadband_m', 0.08)      # hold band; follow when gap > standoff+deadband
+        self.declare_parameter('range_offset_m', 0.30)  # EKF range is from base_link; subtract anchor_x for the gap
         self.declare_parameter('k_linear', 0.6)             # m/s per m of range error
         self.declare_parameter('k_angular', 1.2)            # raw mode: rad/s per m of L-R diff
         self.declare_parameter('k_bearing', 1.0)            # target mode: rad/s per rad of bearing
@@ -61,6 +62,7 @@ class FollowController(Node):
         self.use_target = bool(g('use_target'))
         self.standoff = float(g('standoff_m'))
         self.deadband = float(g('deadband_m'))
+        self.range_off = float(g('range_offset_m'))
         self.k_lin = float(g('k_linear'))
         self.k_ang = float(g('k_angular'))
         self.k_bearing = float(g('k_bearing'))
@@ -149,12 +151,9 @@ class FollowController(Node):
             if not (self._fresh(self.tt) and self.target is not None):
                 self._publish(0.0, 0.0, 'LOST', None); return
             bx, by = self.target
-            bearing = math.atan2(by, bx)                 # true bearing from the EKF
-            # follow distance = gap to the front anchors (physical, tape-measurable)
-            if self._fresh(self.tl) and self._fresh(self.tr) and self.dl is not None and self.dr is not None:
-                frange = 0.5 * (self.dl + self.dr)
-            else:
-                frange = math.hypot(bx, by)
+            bearing = math.atan2(by, bx)                 # bearing from the EKF
+            rng = math.hypot(bx, by)                      # EKF range from base_link
+            frange = max(0.0, rng - self.range_off)       # gap to the front anchors
             heading = 0.0 if abs(bearing) < self.bear_db else bearing
             ang_cmd = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
             off = abs(bearing)

@@ -54,13 +54,14 @@ def generate_launch_description():
                           'left_offset_m': 0.0}]),
         Node(package='trolley_core', executable='uwb_localizer',
              name='uwb_localizer', output='screen',
-             parameters=[{'anchor_x': 0.30,                # ESTIMATE - measure and replace
+             parameters=[{'anchor_x': 0.22,                # MEASURED: anchors 22 cm forward of cart centre
                           'anchor_baseline': 0.24,         # MEASURED tip-to-tip (2026-09-14)
                           'process_accel_std': 0.6}]),
         Node(package='trolley_core', executable='follow_controller',
              name='follow_controller', output='screen',
              parameters=[{'use_target': True,
-                          'standoff_m': 0.45}]),
+                          'standoff_m': 0.45,
+                          'range_offset_m': 0.22}]),   # = anchor_x; gap = EKF range - this
         Node(package='trolley_core', executable='follow_logger',
              name='follow_logger', output='screen',
              parameters=[{'standoff_m': 0.45}],

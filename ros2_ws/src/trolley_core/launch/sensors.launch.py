@@ -36,5 +36,5 @@ def generate_launch_description():
                           'left_offset_m': 0.0}]),
         Node(package='trolley_core', executable='uwb_localizer',
              name='uwb_localizer', output='screen',
-             parameters=[{'anchor_x': 0.30, 'anchor_baseline': 0.24}]),
+             parameters=[{'anchor_x': 0.22, 'anchor_baseline': 0.24}]),
     ])

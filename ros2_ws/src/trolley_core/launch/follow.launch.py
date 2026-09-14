@@ -60,9 +60,9 @@ def generate_launch_description():
         Node(package='trolley_core', executable='follow_controller',
              name='follow_controller', output='screen',
              parameters=[{'use_target': True,
-                          'standoff_m': 1.0}]),
+                          'standoff_m': 0.45}]),
         Node(package='trolley_core', executable='follow_logger',
              name='follow_logger', output='screen',
-             parameters=[{'standoff_m': 1.0}],
+             parameters=[{'standoff_m': 0.45}],
              condition=IfCondition(log)),
     ])

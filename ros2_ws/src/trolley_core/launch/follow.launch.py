@@ -49,7 +49,9 @@ def generate_launch_description():
              name='arduino_base_controller', output='screen',
              parameters=[{'wheel_track_m': 0.35}]),        # ESTIMATE - measure and replace
         Node(package='trolley_core', executable='uwb_ranging',
-             name='uwb_ranging', output='screen'),
+             name='uwb_ranging', output='screen',
+             parameters=[{'right_offset_m': -0.23,   # measured: right read +0.23 m long
+                          'left_offset_m': 0.0}]),
         Node(package='trolley_core', executable='uwb_localizer',
              name='uwb_localizer', output='screen',
              parameters=[{'anchor_x': 0.30,                # ESTIMATE - measure and replace

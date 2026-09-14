@@ -31,7 +31,9 @@ def generate_launch_description():
         Node(package='trolley_core', executable='arduino_base',
              name='arduino_base_controller', output='screen'),
         Node(package='trolley_core', executable='uwb_ranging',
-             name='uwb_ranging', output='screen'),
+             name='uwb_ranging', output='screen',
+             parameters=[{'right_offset_m': -0.23,   # measured: right read +0.23 m long
+                          'left_offset_m': 0.0}]),
         Node(package='trolley_core', executable='uwb_localizer',
              name='uwb_localizer', output='screen',
              parameters=[{'anchor_x': 0.30, 'anchor_baseline': 0.24}]),

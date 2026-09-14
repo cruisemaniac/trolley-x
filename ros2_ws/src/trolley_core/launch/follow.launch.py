@@ -1,4 +1,20 @@
-"""Launch the autonomous follow stack."""
+"""Autonomous follow stack: lidar + safety + base + UWB + EKF + follow + logger.
+
+follow_controller -> /motion_request -> safety_braking -> /cmd_vel -> arduino_base.
+Do not run teleop at the same time (both publish /motion_request).
+
+GEOMETRY - the three values below are ESTIMATES (never measured; wiring.md marks
+them "TODO"). The cart will drive and follow with these, but replace them with a
+tape measurement when you can:
+  wheel_track_m   : distance between the LEFT and RIGHT wheel contact points (m).
+                    Low sensitivity - skid-steer slips, so this is a turn-rate
+                    scale you tune anyway via k_bearing / min_turn_pwm. Estimate ok.
+  anchor_x        : forward distance from base_link origin to the front pillars
+                    where the anchors sit (m). Low sensitivity at follow ranges.
+  anchor_baseline : LEFT-to-RIGHT separation of the two front-pillar anchors (m).
+                    THIS ONE MATTERS - it sets the EKF bearing scale. Measure it.
+                    Wider = sharper bearing (0.30 m at ~2 m is weak).
+"""
 
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
@@ -11,10 +27,13 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     lidar = LaunchConfiguration('lidar')
+    log = LaunchConfiguration('log')
 
     return LaunchDescription([
         DeclareLaunchArgument('lidar', default_value='true',
                               description='Also start the RPLIDAR A1 driver.'),
+        DeclareLaunchArgument('log', default_value='true',
+                              description='Also start the CSV data logger.'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -27,12 +46,21 @@ def generate_launch_description():
              name='safety_braking_node', output='screen',
              parameters=[{'invert_scan': True, 'bearing_offset_deg': 180.0}]),
         Node(package='trolley_core', executable='arduino_base',
-             name='arduino_base_controller', output='screen'),
+             name='arduino_base_controller', output='screen',
+             parameters=[{'wheel_track_m': 0.35}]),        # ESTIMATE - measure and replace
         Node(package='trolley_core', executable='uwb_ranging',
              name='uwb_ranging', output='screen'),
         Node(package='trolley_core', executable='uwb_localizer',
-             name='uwb_localizer', output='screen'),
+             name='uwb_localizer', output='screen',
+             parameters=[{'anchor_x': 0.30,                # ESTIMATE - measure and replace
+                          'anchor_baseline': 0.24,         # MEASURED tip-to-tip (2026-09-14)
+                          'process_accel_std': 0.6}]),
         Node(package='trolley_core', executable='follow_controller',
              name='follow_controller', output='screen',
-             parameters=[{'use_target': True}]),
+             parameters=[{'use_target': True,
+                          'standoff_m': 1.0}]),
+        Node(package='trolley_core', executable='follow_logger',
+             name='follow_logger', output='screen',
+             parameters=[{'standoff_m': 1.0}],
+             condition=IfCondition(log)),
     ])

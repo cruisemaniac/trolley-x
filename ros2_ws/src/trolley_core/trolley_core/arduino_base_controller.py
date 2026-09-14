@@ -1,4 +1,24 @@
-"""Arduino serial bridge with odometry and IMU output."""
+"""Arduino base controller + odometry/IMU bridge.
+
+Two jobs:
+  1. Drive: subscribe to the safety-limited /cmd_vel and send a per-wheel command
+     so the cart can drive AND turn at the same time (arcs), not one or the other.
+       (v, omega) -> left/right wheel speed -> signed PWM -> "M <left> <right>"
+     A pure spin (v=0) and a straight drive (omega=0) are just special cases.
+     "X" is sent when the command is zero.
+  2. Sense: parse the Arduino's 20 Hz CSV telemetry
+       left_m, right_m, accel_x, gyro_z
+     and publish /imu/data (sensor_msgs/Imu) and /odom (nav_msgs/Odometry) with
+     the odom->base_link TF.
+
+Odometry is gyro-aided: distance from the wheel encoders, heading from the
+integrated gyro (not the wheel difference), so it does NOT need the wheel track
+width and is robust to skid-steer slip. The gyro bias is estimated from a short
+stationary window at startup - keep the cart still until "gyro bias calibrated".
+
+NOTE: wheel_track_m IS used for the drive mapping (v, omega -> wheel speeds).
+Measure the left-right wheel contact separation and set it.
+"""
 
 import math
 
@@ -29,8 +49,9 @@ class ArduinoBaseController(Node):
         self.declare_parameter('max_linear_mps', 0.5)
         self.declare_parameter('max_angular_rps', 1.5)
         self.declare_parameter('max_pwm', 160)
-        self.declare_parameter('min_move_pwm', 60)   # overcome the gearboxes
-        self.declare_parameter('min_turn_pwm', 120)  # skid-steer needs torque
+        self.declare_parameter('min_move_pwm', 60)    # overcome the gearboxes (drive)
+        self.declare_parameter('min_turn_pwm', 120)   # skid-steer breakaway torque (turn)
+        self.declare_parameter('wheel_track_m', 0.30) # MEASURE THIS: left-right wheel separation
         # Odometry / IMU
         self.declare_parameter('publish_odom', True)
         self.declare_parameter('publish_odom_tf', True)   # off if an EKF owns odom->base_link
@@ -50,6 +71,7 @@ class ArduinoBaseController(Node):
         self.max_pwm = int(g('max_pwm'))
         self.min_move = int(g('min_move_pwm'))
         self.min_turn = int(g('min_turn_pwm'))
+        self.track = float(g('wheel_track_m'))
         self.publish_odom = bool(g('publish_odom'))
         self.publish_tf = bool(g('publish_odom_tf'))
         self.odom_frame = g('odom_frame')
@@ -57,6 +79,12 @@ class ArduinoBaseController(Node):
         self.imu_frame = g('imu_frame')
         self.bias_n = int(g('gyro_bias_samples'))
         self.max_jump = float(g('max_wheel_jump_m'))
+
+        # Wheel-speed normaliser: the fastest a wheel is ever asked to go equals
+        # a full-speed straight plus a full-speed turn. Map that to max_pwm.
+        self.wheel_max_mps = self.max_lin + self.max_ang * self.track / 2.0
+        if self.wheel_max_mps <= 0.0:
+            self.wheel_max_mps = 0.5
 
         try:
             self.arduino = serial.Serial(self.serial_port, self.baud_rate, timeout=0.1)
@@ -85,24 +113,40 @@ class ArduinoBaseController(Node):
 
         self.read_thread = threading.Thread(target=self.read_telemetry, daemon=True)
         self.read_thread.start()
+        self.get_logger().info(
+            f"Base controller (differential). track {self.track} m, "
+            f"wheel_max {self.wheel_max_mps:.2f} m/s -> pwm {self.max_pwm}")
 
     # ---- drive ----
-    def _scale(self, value, max_value, floor_pwm):
-        frac = min(1.0, abs(value) / max_value) if max_value > 0 else 0.0
+    def _wheel_pwm(self, wheel_mps):
+        """Signed wheel speed (m/s) -> signed PWM with a movement floor."""
+        if abs(wheel_mps) < 1e-3:
+            return 0
+        frac = min(1.0, abs(wheel_mps) / self.wheel_max_mps)
         pwm = int(round(frac * self.max_pwm))
-        return max(floor_pwm, min(self.max_pwm, pwm))
+        floor = self.min_move
+        pwm = max(floor, min(self.max_pwm, pwm))
+        return pwm if wheel_mps > 0 else -pwm
 
     def cmd_vel_callback(self, msg):
-        if msg.linear.x > 0.0:
-            command = f"W {self._scale(msg.linear.x, self.max_lin, self.min_move)}"
-        elif msg.linear.x < 0.0:
-            command = f"S {self._scale(msg.linear.x, self.max_lin, self.min_move)}"
-        elif msg.angular.z > 0.0:
-            command = f"A {self._scale(msg.angular.z, self.max_ang, self.min_turn)}"
-        elif msg.angular.z < 0.0:
-            command = f"D {self._scale(msg.angular.z, self.max_ang, self.min_turn)}"
-        else:
-            command = "X"
+        v = max(-self.max_lin, min(self.max_lin, float(msg.linear.x)))
+        w = max(-self.max_ang, min(self.max_ang, float(msg.angular.z)))
+
+        # Differential kinematics: turn -> wheel-speed difference.
+        v_left = v - w * self.track / 2.0
+        v_right = v + w * self.track / 2.0
+        left = self._wheel_pwm(v_left)
+        right = self._wheel_pwm(v_right)
+
+        # A near-pure spin can fall below the drive floor; lift it to the turn floor
+        # so skid-steer actually breaks away.
+        if abs(v) < 1e-3 and abs(w) > 1e-3:
+            if left != 0:
+                left = int(math.copysign(max(self.min_turn, abs(left)), left))
+            if right != 0:
+                right = int(math.copysign(max(self.min_turn, abs(right)), right))
+
+        command = "X" if (left == 0 and right == 0) else f"M {left} {right}"
 
         if hasattr(self, 'arduino') and self.arduino.is_open:
             self.arduino.write((command + "\n").encode('utf-8'))
@@ -135,15 +179,14 @@ class ArduinoBaseController(Node):
         m = Imu()
         m.header.stamp = now.to_msg()
         m.header.frame_id = self.imu_frame
-        m.orientation_covariance[0] = -1.0            # no orientation estimate
-        m.angular_velocity.z = float(gyro_z)          # rad/s, raw
-        m.linear_acceleration.x = float(accel_x)      # m/s^2
+        m.orientation_covariance[0] = -1.0
+        m.angular_velocity.z = float(gyro_z)
+        m.linear_acceleration.x = float(accel_x)
         m.angular_velocity_covariance = _cov({0: 1e6, 4: 1e6, 8: 0.02})
         m.linear_acceleration_covariance = _cov({0: 0.05, 4: 1e6, 8: 1e6})
         self.imu_pub.publish(m)
 
     def _update_odom(self, now, left, right, gyro_z):
-        # gyro bias: average a stationary window at startup
         if not self.calibrated:
             self.bias_sum += gyro_z
             self.bias_count += 1
@@ -160,13 +203,13 @@ class ArduinoBaseController(Node):
             return
 
         dt = (now - self.last_time).nanoseconds / 1e9
-        if dt <= 0.0 or dt > 0.5:                     # stale / first / gap
+        if dt <= 0.0 or dt > 0.5:
             self.last_left, self.last_right, self.last_time = left, right, now
             return
 
         dl = left - self.last_left
         dr = right - self.last_right
-        if abs(dl) > self.max_jump or abs(dr) > self.max_jump:   # Arduino reset
+        if abs(dl) > self.max_jump or abs(dr) > self.max_jump:
             self.last_left, self.last_right, self.last_time = left, right, now
             return
 

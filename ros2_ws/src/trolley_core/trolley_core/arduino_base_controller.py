@@ -118,33 +118,39 @@ class ArduinoBaseController(Node):
             f"wheel_max {self.wheel_max_mps:.2f} m/s -> pwm {self.max_pwm}")
 
     # ---- drive ----
-    def _wheel_pwm(self, wheel_mps):
-        """Signed wheel speed (m/s) -> signed PWM with a movement floor."""
-        if abs(wheel_mps) < 1e-3:
-            return 0
-        frac = min(1.0, abs(wheel_mps) / self.wheel_max_mps)
-        pwm = int(round(frac * self.max_pwm))
-        floor = self.min_move
-        pwm = max(floor, min(self.max_pwm, pwm))
-        return pwm if wheel_mps > 0 else -pwm
-
     def cmd_vel_callback(self, msg):
         v = max(-self.max_lin, min(self.max_lin, float(msg.linear.x)))
         w = max(-self.max_ang, min(self.max_ang, float(msg.angular.z)))
 
         # Differential kinematics: turn -> wheel-speed difference.
-        v_left = v - w * self.track / 2.0
-        v_right = v + w * self.track / 2.0
-        left = self._wheel_pwm(v_left)
-        right = self._wheel_pwm(v_right)
+        vl = v - w * self.track / 2.0
+        vr = v + w * self.track / 2.0
 
-        # A near-pure spin can fall below the drive floor; lift it to the turn floor
-        # so skid-steer actually breaks away.
-        if abs(v) < 1e-3 and abs(w) > 1e-3:
-            if left != 0:
-                left = int(math.copysign(max(self.min_turn, abs(left)), left))
-            if right != 0:
-                right = int(math.copysign(max(self.min_turn, abs(right)), right))
+        # While driving, a wheel may NOT reverse: a tight turn becomes a pivot/arc,
+        # never an in-place counter-rotating spin. Pure spin is only for v ~ 0.
+        spinning = abs(v) < 0.02 and abs(w) > 1e-3
+        if v > 0.02:
+            vl = max(0.0, vl); vr = max(0.0, vr)
+        elif v < -0.02:
+            vl = min(0.0, vl); vr = min(0.0, vr)
+
+        # To PWM, preserving the left/right ratio (the arc shape). One shared
+        # movement floor lifts the FASTER wheel to break away; the slower wheel
+        # keeps its proportion instead of being floored up into a spin.
+        lpwm = abs(vl) / self.wheel_max_mps * self.max_pwm
+        rpwm = abs(vr) / self.wheel_max_mps * self.max_pwm
+        peak = max(lpwm, rpwm)
+        floor = self.min_turn if spinning else self.min_move
+        if peak < 1.0:
+            left = right = 0
+        else:
+            if peak < floor:
+                k = floor / peak
+                lpwm *= k; rpwm *= k
+            left = int(round(min(self.max_pwm, lpwm)))
+            right = int(round(min(self.max_pwm, rpwm)))
+            if vl < 0: left = -left
+            if vr < 0: right = -right
 
         command = "X" if (left == 0 and right == 0) else f"M {left} {right}"
 

@@ -17,7 +17,7 @@ setup(
     zip_safe=True,
     maintainer='navigator',
     maintainer_email='navigator@todo.todo',
-    description='Trolley-X core nodes: Arduino base controller, teleop, and LiDAR safety.',
+    description='Trolley-X core nodes: Arduino base controller, teleop, LiDAR safety, UWB follow.',
     license='TODO: License declaration',
     extras_require={
         'test': [
@@ -32,6 +32,8 @@ setup(
             'uwb_ranging = trolley_core.uwb_ranging:main',
             'follow_controller = trolley_core.follow_controller:main',
             'uwb_localizer = trolley_core.uwb_localizer:main',
+            'follow_logger = trolley_core.follow_logger:main',
+            'static_capture = trolley_core.static_capture:main',
         ],
     },
 )

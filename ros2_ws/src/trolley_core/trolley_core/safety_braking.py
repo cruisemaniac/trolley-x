@@ -17,9 +17,9 @@ class SafetyBrakingNode(Node):
         self.declare_parameter('motion_request_topic', '/motion_request')
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('safety_state_topic', '/safety/state')
-        self.declare_parameter('stop_distance_m', 0.4)
-        self.declare_parameter('slow_distance_m', 0.5)
-        self.declare_parameter('warn_distance_m', 0.75)
+        self.declare_parameter('stop_distance_m', 0.30)
+        self.declare_parameter('slow_distance_m', 0.45)
+        self.declare_parameter('warn_distance_m', 0.70)
         self.declare_parameter('slow_max_linear_mps', 0.15)
         self.declare_parameter('range_min_m', 0.05)
         self.declare_parameter('range_max_m', 12.0)
@@ -158,6 +158,11 @@ class SafetyBrakingNode(Node):
             cmd.linear.x = self._limit(cmd.linear.x, front)
         elif cmd.linear.x < 0.0:
             cmd.linear.x = self._limit(cmd.linear.x, rear)
+
+        # full stop (including rotation) when an obstacle is right in front
+        if front <= self.stop_d:
+            cmd.linear.x = 0.0
+            cmd.angular.z = 0.0
 
         self.cmd_pub.publish(cmd)
 

@@ -32,7 +32,7 @@ COLUMNS = [
     'target_x', 'target_y', 'target_range_m', 'target_bearing_deg',
     'tag_odom_x', 'tag_odom_y', 'odom_x', 'odom_y', 'odom_theta_deg',
     'req_lin', 'req_ang', 'cmd_lin', 'cmd_ang', 'safety_state',
-    'lidar_front_min_m', 'innovation_m', 'reject_count', 'dist_hold_err_m',
+    'lidar_front_min_m', 'innovation_m', 'nis', 'reject_count', 'dist_hold_err_m',
 ]
 
 
@@ -77,6 +77,7 @@ class FollowLogger(Node):
         self.create_subscription(String, '/safety/state', self.on_safety, 10)
         self.create_subscription(LaserScan, '/scan', self.on_scan, 5)
         self.create_subscription(Float32, '/uwb/innovation', self.on_innov, 20)
+        self.create_subscription(Float32, '/uwb/nis', self.on_nis, 20)
         self.create_subscription(Float32, '/uwb/reject_count', self.on_reject, 10)
 
         self.create_timer(1.0 / float(g('rate_hz')), self.on_timer)
@@ -120,6 +121,7 @@ class FollowLogger(Node):
         self.v['safety_state'] = m.data.split()[0] if m.data else ''
 
     def on_innov(self, m): self.v['innovation_m'] = round(m.data, 4)
+    def on_nis(self, m): self.v['nis'] = round(m.data, 3)
     def on_reject(self, m): self.v['reject_count'] = m.data
 
     def on_scan(self, msg):

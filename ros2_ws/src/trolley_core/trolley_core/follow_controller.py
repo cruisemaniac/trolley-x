@@ -37,14 +37,15 @@ class FollowController(Node):
         self.declare_parameter('right_topic', '/uwb/right')
         self.declare_parameter('target_topic', '/follow/target')
         self.declare_parameter('output_topic', '/motion_request')
-        self.declare_parameter('standoff_m', 1.0)
-        self.declare_parameter('deadband_m', 0.15)
+        self.declare_parameter('standoff_m', 0.45)      # follow gap (mean anchor range, m)
+        self.declare_parameter('deadband_m', 0.08)      # hold band; follow when gap > standoff+deadband
         self.declare_parameter('k_linear', 0.6)             # m/s per m of range error
         self.declare_parameter('k_angular', 1.2)            # raw mode: rad/s per m of L-R diff
         self.declare_parameter('k_bearing', 1.0)            # target mode: rad/s per rad of bearing
         self.declare_parameter('max_linear_mps', 0.4)
         self.declare_parameter('max_angular_rps', 1.0)
-        self.declare_parameter('spin_only_rad', 1.0)        # bearing beyond this => spin in place (~57 deg)
+        self.declare_parameter('turn_first_rad', 1.2)       # far off to the side => turn first, only creep forward
+        self.declare_parameter('creep_frac', 0.3)           # forward fraction while turning hard
         self.declare_parameter('bearing_deadband_rad', 0.09)  # ignore bearing under ~5 deg (kills hunting)
         self.declare_parameter('raw_diff_deadband_m', 0.10)   # raw mode: ignore small L-R diff
         self.declare_parameter('allow_reverse', False)
@@ -65,7 +66,8 @@ class FollowController(Node):
         self.k_bearing = float(g('k_bearing'))
         self.max_lin = float(g('max_linear_mps'))
         self.max_ang = float(g('max_angular_rps'))
-        self.spin_only = float(g('spin_only_rad'))
+        self.turn_first = float(g('turn_first_rad'))
+        self.creep = float(g('creep_frac'))
         self.bear_db = float(g('bearing_deadband_rad'))
         self.raw_db = float(g('raw_diff_deadband_m'))
         self.allow_reverse = bool(g('allow_reverse'))
@@ -147,41 +149,39 @@ class FollowController(Node):
             if not (self._fresh(self.tt) and self.target is not None):
                 self._publish(0.0, 0.0, 'LOST', None); return
             bx, by = self.target
-            rng = math.hypot(bx, by)
-            bearing = math.atan2(by, bx)                 # true bearing, rad
-            range_err = rng - self.standoff
+            bearing = math.atan2(by, bx)                 # true bearing from the EKF
+            # follow distance = gap to the front anchors (physical, tape-measurable)
+            if self._fresh(self.tl) and self._fresh(self.tr) and self.dl is not None and self.dr is not None:
+                frange = 0.5 * (self.dl + self.dr)
+            else:
+                frange = math.hypot(bx, by)
             heading = 0.0 if abs(bearing) < self.bear_db else bearing
-            ang = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
-            diag = f"range {rng:.2f} m, bearing {math.degrees(bearing):+.0f} deg"
+            ang_cmd = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
             off = abs(bearing)
+            diag = f"gap {frange:.2f} m, bearing {math.degrees(bearing):+.0f} deg"
         else:
             if not (self._fresh(self.tl) and self._fresh(self.tr)) or self.dl is None or self.dr is None:
                 self._publish(0.0, 0.0, 'LOST', None); return
             diff = self.dr - self.dl                     # >0 : tag to the left
-            mean = 0.5 * (self.dl + self.dr)
-            range_err = mean - self.standoff
+            frange = 0.5 * (self.dl + self.dr)
             steer = 0.0 if abs(diff) < self.raw_db else diff
-            ang = self._clamp(self.k_ang * steer, -self.max_ang, self.max_ang)
-            diag = f"range {mean:.2f} m, L-R {diff:+.2f} m"
-            # crude bearing proxy for the spin/arc taper (baseline-normalised)
+            ang_cmd = self._clamp(self.k_ang * steer, -self.max_ang, self.max_ang)
             off = min(math.pi / 2.0, abs(diff))
+            diag = f"gap {frange:.2f} m, L-R {diff:+.2f} m"
 
-        # Blend: full spin when badly off-bearing, otherwise arc with a taper.
-        if off >= self.spin_only:
-            lin = 0.0
-            state = 'ALIGN'
+        range_err = frange - self.standoff
+        if range_err > self.deadband:
+            # the operator has moved away -> follow: drive forward AND steer (arc)
+            lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin)
+            if off > self.turn_first:          # far off to the side: turn first, only creep forward
+                lin *= self.creep
+            ang = ang_cmd
+            state = 'FOLLOW'
         else:
-            taper = 1.0 - (off / self.spin_only if self.spin_only > 0 else 0.0)
-            if range_err > self.deadband:
-                lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin) * taper
-                state = 'FOLLOW'
-            elif self.allow_reverse and range_err < -self.deadband:
-                lin = self._clamp(self.k_lin * range_err, -self.max_lin, 0.0)
-                state = 'BACKOFF'
-            else:
-                lin = 0.0
-                state = 'HOLD' if abs(ang) < 1e-3 else 'TURN'
-
+            # within the hold band / too close -> full stop, never spin in place
+            lin = 0.0
+            ang = 0.0
+            state = 'HOLD'
         self._publish(lin, ang, state, diag)
 
     def _log(self, state, diag=None):

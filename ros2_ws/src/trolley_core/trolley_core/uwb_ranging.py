@@ -43,6 +43,8 @@ class UwbRanging(Node):
         self.declare_parameter('left_address', 'ANCHOR_L')
         self.declare_parameter('right_cal_cm', 0)
         self.declare_parameter('left_cal_cm', 0)
+        self.declare_parameter('right_offset_m', 0.0)   # software range trim (per-anchor calibration)
+        self.declare_parameter('left_offset_m', 0.0)
 
         self.declare_parameter('right_topic', 'uwb/right')
         self.declare_parameter('left_topic', 'uwb/left')
@@ -73,9 +75,11 @@ class UwbRanging(Node):
 
         self.anchors = [
             self._make_anchor('right', g('right_port'), g('right_address'),
-                              int(g('right_cal_cm')), g('right_topic'), g('right_frame')),
+                              int(g('right_cal_cm')), g('right_topic'), g('right_frame'),
+                              float(g('right_offset_m'))),
             self._make_anchor('left', g('left_port'), g('left_address'),
-                              int(g('left_cal_cm')), g('left_topic'), g('left_frame')),
+                              int(g('left_cal_cm')), g('left_topic'), g('left_frame'),
+                              float(g('left_offset_m'))),
         ]
 
         if configure:
@@ -89,16 +93,16 @@ class UwbRanging(Node):
             f"UWB ranging v2 active (range + RSSI). anchors -> tag "
             f"'{self.tag_address}' on network '{self.network_id}'")
 
-    def _make_anchor(self, name, port, address, cal_cm, topic, frame):
+    def _make_anchor(self, name, port, address, cal_cm, topic, frame, offset=0.0):
         ser = None
         try:
             ser = serial.Serial(port, self.baud, timeout=self.reply_timeout)
-            self.get_logger().info(f"{name} anchor on {port}")
+            self.get_logger().info(f"{name} anchor on {port} (offset {offset:+.3f} m)")
         except Exception as e:
             self.get_logger().error(f"{name} anchor: cannot open {port}: {e}")
         return {
             'name': name, 'port': port, 'address': address, 'cal': cal_cm,
-            'frame': frame, 'serial': ser,
+            'frame': frame, 'serial': ser, 'offset': offset,
             'pub': self.create_publisher(Range, topic, 10),
             'rssi_pub': self.create_publisher(Float32, topic + '/rssi', 10),
         }
@@ -195,7 +199,7 @@ class UwbRanging(Node):
         msg.field_of_view = self.fov
         msg.min_range = self.range_min
         msg.max_range = self.range_max
-        msg.range = float(dist_m)
+        msg.range = float(dist_m + a['offset'])
         a['pub'].publish(msg)
         if rssi is not None:
             a['rssi_pub'].publish(Float32(data=float(rssi)))

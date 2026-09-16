@@ -48,7 +48,7 @@ class ArduinoBaseController(Node):
         self.declare_parameter('cmd_vel_topic', 'cmd_vel')
         self.declare_parameter('max_linear_mps', 0.5)
         self.declare_parameter('max_angular_rps', 1.5)
-        self.declare_parameter('max_pwm', 160)
+        self.declare_parameter('max_pwm', 120)   # BTS7960: cap ~6 V on the 6 V motors
         self.declare_parameter('min_move_pwm', 60)    # overcome the gearboxes (drive)
         self.declare_parameter('min_turn_pwm', 120)   # skid-steer breakaway torque (turn)
         self.declare_parameter('wheel_track_m', 0.30) # MEASURE THIS: left-right wheel separation

@@ -1,14 +1,21 @@
 /*
- * Trolley-X: UNIFIED Spinal Cord (v2 - blended differential drive)
+ * Trolley-X: UNIFIED Spinal Cord (v3 - BTS7960 differential drive)
  * Architecture: Non-Blocking State Machine, line-based serial parser.
  *
- * WHAT CHANGED FROM v1
- *  - New command "M <leftPWM> <rightPWM>": signed per-wheel PWM. This lets the
- *    Pi command drive and turn AT THE SAME TIME (arcs), not one or the other.
- *    This is the fix for "moves back and forth but does not follow".
- *  - PWM values are now honoured (variable speed), so the safety SLOW zone works.
- *  - A watchdog stops the motors if no command arrives within CMD_TIMEOUT_MS.
- *  - W/S/A/D/X still work for teleop and manual tests (back-compat).
+ * WHAT CHANGED FROM v2 (L298N -> BTS7960)
+ *  - Motor drivers are now 2x BTS7960, one per side. Each side's two motors
+ *    are wired in PARALLEL on that module's M+/M-.
+ *  - Each side is driven by two PWM lines, RPWM and LPWM (no EN/IN pins).
+ *    RPWM drives one direction, LPWM the other. Only ONE is ever non-zero,
+ *    so the H-bridge never shoot-throughs.
+ *  - R_EN + L_EN on both modules are tied to 5 V (always enabled), so no
+ *    Arduino enable pin is used. Motion still stops via PWM=0 (watchdog / X)
+ *    and the hardware E-stop cuts the motor rail.
+ *  - MAX_PWM dropped to 120. The BTS7960 drops ~0.1 V (vs the L298N's ~2-3 V),
+ *    so the motor now sees nearly the full rail. 120/255 keeps a 6 V motor at
+ *    about 6 V even on a full 3S pack. DO NOT raise this without checking the
+ *    motor voltage, or you will cook the 6 V motors.
+ *  - Pin map: LEFT  RPWM=9  LPWM=10 ; RIGHT RPWM=5 LPWM=6. Encoders unchanged.
  *
  * SERIAL PROTOCOL (Pi -> Arduino), one command per line, '\n' terminated:
  *   X                stop
@@ -28,16 +35,16 @@
 
 Adafruit_MPU6050 mpu;
 
-const int EN_LEFT = 9;   const int IN_LEFT_FWD = 8;   const int IN_LEFT_REV = 7;
+// --- MOTOR DRIVER PINS: 2x BTS7960 (RPWM/LPWM per side). Forward = RPWM. ---
+const int L_RPWM = 9;   const int L_LPWM = 10;   // LEFT module
+const int R_RPWM = 5;   const int R_LPWM = 6;    // RIGHT module
 const int ENCODER_LEFT_A = 2;  const int ENCODER_LEFT_B = 4;
-
-const int EN_RIGHT = 10; const int IN_RIGHT_FWD = 6;  const int IN_RIGHT_REV = 5;
 const int ENCODER_RIGHT_A = 3; const int ENCODER_RIGHT_B = 11;
 
 // --- TUNING CONSTANTS ---
-const int   DRIVE_SPEED = 120;   // default PWM for a bare "W"
-const int   TURN_SPEED  = 200;   // default PWM for a bare "A"/"D" spin
-const int   MAX_PWM     = 200;   // hard ceiling on any wheel PWM (protects 6 V motors)
+const int   DRIVE_SPEED = 100;   // default PWM for a bare "W"
+const int   TURN_SPEED  = 120;   // default PWM for a bare "A"/"D" spin
+const int   MAX_PWM     = 120;   // ceiling: BTS7960 ~0 drop, keeps 6 V motors near 6 V
 const float METERS_PER_TICK_LEFT  = (3.14159 * 0.065) / 332.0;
 const float METERS_PER_TICK_RIGHT = (3.14159 * 0.065) / 325.0;
 const unsigned long CMD_TIMEOUT_MS = 600;   // watchdog: stop if no command in this window
@@ -68,8 +75,10 @@ long rightTicksAtStart = 0;
 void setup() {
   Serial.begin(9600);
 
-  pinMode(EN_LEFT, OUTPUT); pinMode(IN_LEFT_FWD, OUTPUT); pinMode(IN_LEFT_REV, OUTPUT);
-  pinMode(EN_RIGHT, OUTPUT); pinMode(IN_RIGHT_FWD, OUTPUT); pinMode(IN_RIGHT_REV, OUTPUT);
+  pinMode(L_RPWM, OUTPUT); pinMode(L_LPWM, OUTPUT);
+  pinMode(R_RPWM, OUTPUT); pinMode(R_LPWM, OUTPUT);
+  analogWrite(L_RPWM, 0); analogWrite(L_LPWM, 0);
+  analogWrite(R_RPWM, 0); analogWrite(R_LPWM, 0);
   pinMode(ENCODER_LEFT_A, INPUT); pinMode(ENCODER_LEFT_B, INPUT);
   pinMode(ENCODER_RIGHT_A, INPUT); pinMode(ENCODER_RIGHT_B, INPUT);
 
@@ -110,7 +119,6 @@ void loop() {
 
 // --- COMMAND PARSER ---
 void parseLine(char *line) {
-  // First non-space char is the command; the rest are integer arguments.
   char cmd = line[0];
   if (cmd == 'X' || cmd == 'W' || cmd == 'S' || cmd == 'A' || cmd == 'D' || cmd == 'M') {
     if (cmd == 'M') {
@@ -123,7 +131,6 @@ void parseLine(char *line) {
       }
       return;
     }
-    // W/S/A/D optional speed argument
     int v = 0;
     cmdSpeed = (sscanf(line + 1, "%d", &v) == 1) ? clampPwm(v) : 0;
     if (cmd == 'W' && currentCmd != 'W') {   // reset PID datum when entering forward
@@ -151,7 +158,6 @@ void executeMotionState() {
     setWheel(false, cmdRightPwm);   // right
   }
   else if (currentCmd == 'W') {
-    // Forward with encoder straight-line PID.
     int base = (cmdSpeed > 0) ? cmdSpeed : DRIVE_SPEED;
     float leftDist  = (leftTicks - leftTicksAtStart) * METERS_PER_TICK_LEFT;
     float rightDist = (rightTicks - rightTicksAtStart) * METERS_PER_TICK_RIGHT;
@@ -175,27 +181,23 @@ void executeMotionState() {
   }
 }
 
-// Drive one side by a signed PWM. Positive = forward.
+// Drive one side by a signed PWM. Positive = forward (RPWM). Only one of the
+// two PWM inputs is ever non-zero, so the H-bridge never shoot-throughs.
 void setWheel(bool left, int pwm) {
   int mag = abs(pwm);
   if (mag > MAX_PWM) mag = MAX_PWM;
+  int rpwm = (pwm > 0) ? mag : 0;
+  int lpwm = (pwm < 0) ? mag : 0;
   if (left) {
-    if (pwm > 0)      { digitalWrite(IN_LEFT_FWD, HIGH); digitalWrite(IN_LEFT_REV, LOW); }
-    else if (pwm < 0) { digitalWrite(IN_LEFT_FWD, LOW);  digitalWrite(IN_LEFT_REV, HIGH); }
-    else              { digitalWrite(IN_LEFT_FWD, LOW);  digitalWrite(IN_LEFT_REV, LOW); }
-    analogWrite(EN_LEFT, mag);
+    analogWrite(L_RPWM, rpwm); analogWrite(L_LPWM, lpwm);
   } else {
-    if (pwm > 0)      { digitalWrite(IN_RIGHT_FWD, HIGH); digitalWrite(IN_RIGHT_REV, LOW); }
-    else if (pwm < 0) { digitalWrite(IN_RIGHT_FWD, LOW);  digitalWrite(IN_RIGHT_REV, HIGH); }
-    else              { digitalWrite(IN_RIGHT_FWD, LOW);  digitalWrite(IN_RIGHT_REV, LOW); }
-    analogWrite(EN_RIGHT, mag);
+    analogWrite(R_RPWM, rpwm); analogWrite(R_LPWM, lpwm);
   }
 }
 
 void stopMotors() {
-  digitalWrite(IN_LEFT_FWD, LOW); digitalWrite(IN_LEFT_REV, LOW);
-  digitalWrite(IN_RIGHT_FWD, LOW); digitalWrite(IN_RIGHT_REV, LOW);
-  analogWrite(EN_LEFT, 0); analogWrite(EN_RIGHT, 0);
+  analogWrite(L_RPWM, 0); analogWrite(L_LPWM, 0);
+  analogWrite(R_RPWM, 0); analogWrite(R_LPWM, 0);
 }
 
 void transmitTelemetry() {

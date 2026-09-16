@@ -60,9 +60,9 @@ class UwbLocalizer(Node):
         self.declare_parameter('range_noise_std', 0.05)   # m, from measured UWB std
         self.declare_parameter('process_accel_std', 0.6)  # m/s^2, operator manoeuvre
         self.declare_parameter('max_operator_speed', 2.0)  # m/s clamp on the tag velocity
-        self.declare_parameter('min_valid_m', 0.15)
+        self.declare_parameter('min_valid_m', 0.20)
         self.declare_parameter('max_valid_m', 30.0)
-        self.declare_parameter('innovation_gate_m', 0.6)  # reject |z-h| bigger than this; 0 = off
+        self.declare_parameter('innovation_gate_m', 0.4)  # reject |z-h| bigger than this; 0 = off
         self.declare_parameter('init_stale_s', 0.5)       # both ranges must be this fresh to init
         self.declare_parameter('publish_rate_hz', 15.0)
         self.declare_parameter('publish_debug', True)
@@ -79,6 +79,8 @@ class UwbLocalizer(Node):
         self.min_valid = float(g('min_valid_m'))
         self.max_valid = float(g('max_valid_m'))
         self.gate = float(g('innovation_gate_m'))
+        self.baseline = float(g('anchor_baseline'))
+        self.consist_margin = 0.15
         self.init_stale = float(g('init_stale_s'))
         self.debug = bool(g('publish_debug'))
 
@@ -203,6 +205,17 @@ class UwbLocalizer(Node):
         if self.x is None:
             self._try_init(now)
             return
+
+        # two-anchor consistency: |rL - rR| cannot exceed the baseline (triangle
+        # inequality). A violation means one anchor is NLOS/glitching -> reject.
+        other = 'right' if name == 'left' else 'left'
+        if other in self.last_r:
+            r_o, t_o = self.last_r[other]
+            if (now - t_o).nanoseconds / 1e9 < 0.3 and abs(r - r_o) > self.baseline + self.consist_margin:
+                self.reject_count += 1.0
+                if self.debug:
+                    self.reject_pub.publish(Float32(data=self.reject_count))
+                return
 
         self._predict(now)
         anc = self._anchor_odom(name)

@@ -208,7 +208,7 @@ class UwbRanging(Node):
         while rclpy.ok() and not self._stop:
             for a in self.anchors:
                 d, rssi = self.range_once(a)
-                if d is not None:
+                if d is not None and self.range_min < d < self.range_max:
                     self._publish(a, d, rssi)
             time.sleep(self.poll_period)
 

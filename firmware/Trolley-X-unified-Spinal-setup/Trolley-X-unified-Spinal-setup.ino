@@ -8,9 +8,9 @@
  *  - Each side is driven by two PWM lines, RPWM and LPWM (no EN/IN pins).
  *    RPWM drives one direction, LPWM the other. Only ONE is ever non-zero,
  *    so the H-bridge never shoot-throughs.
- *  - R_EN + L_EN on both modules are tied to 5 V (always enabled), so no
- *    Arduino enable pin is used. Motion still stops via PWM=0 (watchdog / X)
- *    and the hardware E-stop cuts the motor rail.
+ *  - R_EN + L_EN on both modules are jumpered together to Arduino pin 8,
+ *    which is held HIGH to enable the bridges. Motion stops via PWM=0
+ *    (watchdog / X) and the hardware E-stop cuts the motor rail.
  *  - MAX_PWM dropped to 120. The BTS7960 drops ~0.1 V (vs the L298N's ~2-3 V),
  *    so the motor now sees nearly the full rail. 120/255 keeps a 6 V motor at
  *    about 6 V even on a full 3S pack. DO NOT raise this without checking the
@@ -38,6 +38,7 @@ Adafruit_MPU6050 mpu;
 // --- MOTOR DRIVER PINS: 2x BTS7960 (RPWM/LPWM per side). Forward = RPWM. ---
 const int L_RPWM = 9;   const int L_LPWM = 10;   // LEFT module
 const int R_RPWM = 5;   const int R_LPWM = 6;    // RIGHT module
+const int MOTOR_EN = 8; // R_EN+L_EN of BOTH modules, jumpered together to pin 8
 const int ENCODER_LEFT_A = 2;  const int ENCODER_LEFT_B = 4;
 const int ENCODER_RIGHT_A = 3; const int ENCODER_RIGHT_B = 11;
 
@@ -79,6 +80,7 @@ void setup() {
   pinMode(R_RPWM, OUTPUT); pinMode(R_LPWM, OUTPUT);
   analogWrite(L_RPWM, 0); analogWrite(L_LPWM, 0);
   analogWrite(R_RPWM, 0); analogWrite(R_LPWM, 0);
+  pinMode(MOTOR_EN, OUTPUT); digitalWrite(MOTOR_EN, HIGH);  // enable both BTS7960 bridges
   pinMode(ENCODER_LEFT_A, INPUT); pinMode(ENCODER_LEFT_B, INPUT);
   pinMode(ENCODER_RIGHT_A, INPUT); pinMode(ENCODER_RIGHT_B, INPUT);
 

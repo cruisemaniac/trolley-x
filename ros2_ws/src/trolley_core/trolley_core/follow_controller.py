@@ -26,6 +26,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Range
 from geometry_msgs.msg import Twist, PointStamped
+from rclpy.duration import Duration
 
 
 class FollowController(Node):
@@ -48,6 +49,11 @@ class FollowController(Node):
         self.declare_parameter('turn_first_rad', 1.2)       # far off to the side => turn first, only creep forward
         self.declare_parameter('creep_frac', 0.5)           # forward fraction while turning hard (keeps an arc)
         self.declare_parameter('bearing_deadband_rad', 0.09)  # ignore bearing under ~5 deg (kills hunting)
+        self.declare_parameter('pivot_enter_deg', 35.0)   # bearing beyond this -> pivot in place to re-face
+        self.declare_parameter('pivot_exit_deg', 15.0)    # pivot until bearing under this (hysteresis)
+        self.declare_parameter('behind_deg', 100.0)       # bearing beyond this -> tag beside/behind -> stop & wait
+        self.declare_parameter('range_jump_m', 1.0)       # EKF range jump between fixes that flags divergence
+        self.declare_parameter('reacquire_hold_s', 1.0)   # stay stopped this long after a divergence flag
         self.declare_parameter('raw_diff_deadband_m', 0.10)   # raw mode: ignore small L-R diff
         self.declare_parameter('allow_reverse', False)
         self.declare_parameter('min_valid_m', 0.15)
@@ -71,6 +77,11 @@ class FollowController(Node):
         self.turn_first = float(g('turn_first_rad'))
         self.creep = float(g('creep_frac'))
         self.bear_db = float(g('bearing_deadband_rad'))
+        self.pivot_enter = math.radians(float(g('pivot_enter_deg')))
+        self.pivot_exit = math.radians(float(g('pivot_exit_deg')))
+        self.behind_rad = math.radians(float(g('behind_deg')))
+        self.jump_m = float(g('range_jump_m'))
+        self.reacq_hold_s = float(g('reacquire_hold_s'))
         self.raw_db = float(g('raw_diff_deadband_m'))
         self.allow_reverse = bool(g('allow_reverse'))
         self.min_valid = float(g('min_valid_m'))
@@ -89,6 +100,9 @@ class FollowController(Node):
         self.state = 'INIT'
         self.prev_lin = 0.0
         self.prev_ang = 0.0
+        self.pivoting = False
+        self.last_rng = None
+        self.untrusted_until = None
 
         self.create_subscription(Range, g('left_topic'), self.on_left, 10)
         self.create_subscription(Range, g('right_topic'), self.on_right, 10)
@@ -148,40 +162,75 @@ class FollowController(Node):
 
     def on_timer(self):
         if self.use_target:
-            if not (self._fresh(self.tt) and self.target is not None):
-                self._publish(0.0, 0.0, 'LOST', None); return
-            bx, by = self.target
-            bearing = math.atan2(by, bx)                 # bearing from the EKF
-            rng = math.hypot(bx, by)                      # EKF range from base_link
-            frange = max(0.0, rng - self.range_off)       # gap to the front anchors
-            heading = 0.0 if abs(bearing) < self.bear_db else bearing
-            ang_cmd = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
-            off = abs(bearing)
-            diag = f"gap {frange:.2f} m, bearing {math.degrees(bearing):+.0f} deg"
+            self._run_target()
         else:
-            if not (self._fresh(self.tl) and self._fresh(self.tr)) or self.dl is None or self.dr is None:
-                self._publish(0.0, 0.0, 'LOST', None); return
-            diff = self.dr - self.dl                     # >0 : tag to the left
-            frange = 0.5 * (self.dl + self.dr)
-            steer = 0.0 if abs(diff) < self.raw_db else diff
-            ang_cmd = self._clamp(self.k_ang * steer, -self.max_ang, self.max_ang)
-            off = min(math.pi / 2.0, abs(diff))
-            diag = f"gap {frange:.2f} m, L-R {diff:+.2f} m"
+            self._run_raw()
 
+    def _run_target(self):
+        """State machine on the EKF tag: LOST / REACQUIRE / PIVOT / FOLLOW / HOLD."""
+        now = self.get_clock().now()
+        if not (self._fresh(self.tt) and self.target is not None):
+            self.pivoting = False
+            self._publish(0.0, 0.0, 'LOST', None); return
+
+        bx, by = self.target
+        bearing = math.atan2(by, bx)                   # + = tag to the left
+        rng = math.hypot(bx, by)                        # EKF range from base_link
+        frange = max(0.0, rng - self.range_off)         # gap to the front anchors
         range_err = frange - self.standoff
+        ab = abs(bearing)
+        diag = f"gap {frange:.2f} m, bearing {math.degrees(bearing):+.0f} deg"
+
+        # Trust gate. A large range jump flags EKF divergence (held for a moment).
+        # Bearing past 'behind' means the tag is beside/behind the cart, where two
+        # forward anchors cannot resolve it. Either way: stop and wait (REACQUIRE).
+        if self.last_rng is not None and abs(rng - self.last_rng) > self.jump_m:
+            self.untrusted_until = now + Duration(seconds=self.reacq_hold_s)
+        self.last_rng = rng
+        untrusted = self.untrusted_until is not None and now < self.untrusted_until
+        if ab > self.behind_rad or untrusted:
+            self.pivoting = False
+            self._publish(0.0, 0.0, 'REACQUIRE', diag); return
+
+        heading = 0.0 if ab < self.bear_db else bearing
+        ang_cmd = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
+
+        # Pivot hysteresis: start turning in place at pivot_enter, keep until pivot_exit.
+        if self.pivoting:
+            if ab < self.pivot_exit:
+                self.pivoting = False
+        elif ab > self.pivot_enter:
+            self.pivoting = True
+
+        if self.pivoting:
+            # Too far off the nose to arc: turn in place to re-face, then follow.
+            self._publish(0.0, ang_cmd, 'PIVOT', diag); return
+
         if range_err > self.deadband:
-            # the operator has moved away -> follow: drive forward AND steer (arc)
             lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin)
-            if off > self.turn_first:          # far off to the side: turn first, only creep forward
-                lin *= self.creep
-            ang = ang_cmd
-            state = 'FOLLOW'
+            self._publish(lin, ang_cmd, 'FOLLOW', diag)
         else:
-            # within the hold band / too close -> full stop, never spin in place
-            lin = 0.0
-            ang = 0.0
-            state = 'HOLD'
-        self._publish(lin, ang, state, diag)
+            # At the stand-off and roughly aligned: hold still.
+            self._publish(0.0, 0.0, 'HOLD', diag)
+
+    def _run_raw(self):
+        """Legacy raw differential-range follow (no EKF): arc or hold."""
+        if not (self._fresh(self.tl) and self._fresh(self.tr)) or self.dl is None or self.dr is None:
+            self._publish(0.0, 0.0, 'LOST', None); return
+        diff = self.dr - self.dl                        # >0 : tag to the left
+        frange = 0.5 * (self.dl + self.dr)
+        steer = 0.0 if abs(diff) < self.raw_db else diff
+        ang_cmd = self._clamp(self.k_ang * steer, -self.max_ang, self.max_ang)
+        off = min(math.pi / 2.0, abs(diff))
+        range_err = frange - self.standoff
+        diag = f"gap {frange:.2f} m, L-R {diff:+.2f} m"
+        if range_err > self.deadband:
+            lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin)
+            if off > self.turn_first:
+                lin *= self.creep
+            self._publish(lin, ang_cmd, 'FOLLOW', diag)
+        else:
+            self._publish(0.0, 0.0, 'HOLD', diag)
 
     def _log(self, state, diag=None):
         if state != self.state:

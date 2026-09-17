@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Reset the RPLIDAR USB port to clear the "Can not start scan: 80008002" state
-# that sllidar_node leaves behind when it is hard-killed (it ignores SIGINT and
-# gets SIGTERM'd, so the scan/motor are never stopped cleanly).
+# Reset the RPLIDAR USB port to clear the "Can not start scan: 8000800x" state
+# that sllidar_node leaves behind when it is hard-killed. After the reset the
+# device re-enumerates, so this WAITS for it to come back and settle before you
+# launch (a launch fired too early times out with 80008000).
 #
-# Run this before a launch that errored on the LiDAR:
 #   ./scripts/lidar-reset.sh          # uses /dev/lidar
 #   ./scripts/lidar-reset.sh /dev/ttyUSB0
 #
@@ -14,7 +14,7 @@ sudo python3 - "$DEV" << 'PY'
 import os, sys, fcntl
 USBDEVFS_RESET = (ord('U') << 8) | 20
 dev = sys.argv[1]
-tty = os.path.realpath(dev)                      # /dev/lidar -> /dev/ttyUSBx
+tty = os.path.realpath(dev)
 name = os.path.basename(tty)
 p = os.path.realpath(f"/sys/class/tty/{name}/device")
 usb = None
@@ -32,4 +32,16 @@ try:
 finally:
     os.close(fd)
 PY
-echo "done - wait ~2 s, then launch"
+
+# wait for the device node to re-appear after re-enumeration
+echo "waiting for $DEV to come back..."
+for i in $(seq 1 30); do
+  [ -e "$DEV" ] && break
+  sleep 0.5
+done
+if [ ! -e "$DEV" ]; then
+  echo "WARNING: $DEV did not re-appear; check the udev rule / cable"; exit 1
+fi
+# let the motor controller settle before the first start_scan
+sleep 4
+echo "LiDAR ready - launch now"

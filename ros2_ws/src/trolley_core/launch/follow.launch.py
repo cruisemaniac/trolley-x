@@ -60,10 +60,10 @@ def generate_launch_description():
         Node(package='trolley_core', executable='follow_controller',
              name='follow_controller', output='screen',
              parameters=[{'use_target': True,
-                          'standoff_m': 0.45,
+                          'standoff_m': 0.80,   # stop ~1.1 m EKF range; keeps UWB in its reliable zone
                           'range_offset_m': 0.22}]),   # = anchor_x; gap = EKF range - this
         Node(package='trolley_core', executable='follow_logger',
              name='follow_logger', output='screen',
-             parameters=[{'standoff_m': 0.45}],
+             parameters=[{'standoff_m': 0.80}],
              condition=IfCondition(log)),
     ])

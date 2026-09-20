@@ -206,6 +206,13 @@ class FollowController(Node):
             self.pivoting = False
             self._publish(0.0, 0.0, 'REACQUIRE', diag); return
 
+        # Once the cart is at the target gap, hold position. Close-range UWB
+        # bearing is weak with the 0.24 m anchor baseline, so it must not start
+        # a pivot while the range controller has already reached its target.
+        if range_err <= self.deadband:
+            self.pivoting = False
+            self._publish(0.0, 0.0, 'HOLD', diag); return
+
         heading = 0.0 if ab < self.bear_db else bearing
         ang_cmd = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
 
@@ -220,12 +227,8 @@ class FollowController(Node):
             # Too far off the nose to arc: turn in place to re-face, then follow.
             self._publish(0.0, ang_cmd, 'PIVOT', diag); return
 
-        if range_err > self.deadband:
-            lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin)
-            self._publish(lin, ang_cmd, 'FOLLOW', diag)
-        else:
-            # At the stand-off and roughly aligned: hold still.
-            self._publish(0.0, 0.0, 'HOLD', diag)
+        lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin)
+        self._publish(lin, ang_cmd, 'FOLLOW', diag)
 
     def _run_raw(self):
         """Legacy raw differential-range follow (no EKF): arc or hold."""

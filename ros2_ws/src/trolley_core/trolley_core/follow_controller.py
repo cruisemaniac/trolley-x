@@ -55,7 +55,6 @@ class FollowController(Node):
         self.declare_parameter('range_jump_m', 1.0)       # EKF range jump between fixes that flags divergence
         self.declare_parameter('reacquire_hold_s', 1.0)   # stay stopped this long after a divergence flag
         self.declare_parameter('raw_diff_deadband_m', 0.10)   # raw mode: ignore small L-R diff
-        self.declare_parameter('raw_bearing_disagree_m', 0.08)
         self.declare_parameter('allow_reverse', False)
         self.declare_parameter('min_valid_m', 0.15)
         self.declare_parameter('max_valid_m', 30.0)
@@ -84,7 +83,6 @@ class FollowController(Node):
         self.jump_m = float(g('range_jump_m'))
         self.reacq_hold_s = float(g('reacquire_hold_s'))
         self.raw_db = float(g('raw_diff_deadband_m'))
-        self.raw_bearing_gate = float(g('raw_bearing_disagree_m'))
         self.allow_reverse = bool(g('allow_reverse'))
         self.min_valid = float(g('min_valid_m'))
         self.max_valid = float(g('max_valid_m'))
@@ -189,18 +187,6 @@ class FollowController(Node):
         if self.last_rng is not None and abs(rng - self.last_rng) > self.jump_m:
             self.untrusted_until = now + Duration(seconds=self.reacq_hold_s)
         self.last_rng = rng
-
-        # The EKF bearing must agree with a clear raw left/right range difference.
-        # A disagreement indicates a mirrored or stale estimate. Stop instead of
-        # turning towards a side that the raw anchors contradict.
-        if (self._fresh(self.tl) and self._fresh(self.tr) and
-                self.dl is not None and self.dr is not None):
-            raw_diff = self.dr - self.dl  # positive means the tag is to the left
-            if abs(raw_diff) >= self.raw_bearing_gate and ab >= self.bear_db:
-                if raw_diff * bearing < 0.0:
-                    self.untrusted_until = now + Duration(seconds=self.reacq_hold_s)
-                    diag += f", raw L-R {raw_diff:+.2f} m disagrees"
-
         untrusted = self.untrusted_until is not None and now < self.untrusted_until
         if ab > self.behind_rad or untrusted:
             self.pivoting = False

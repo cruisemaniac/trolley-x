@@ -63,7 +63,6 @@ class UwbLocalizer(Node):
         self.declare_parameter('min_valid_m', 0.20)
         self.declare_parameter('max_valid_m', 30.0)
         self.declare_parameter('innovation_gate_m', 0.4)  # reject |z-h| bigger than this; 0 = off
-        self.declare_parameter('max_consecutive_rejects', 8)
         self.declare_parameter('init_stale_s', 0.5)       # both ranges must be this fresh to init
         self.declare_parameter('publish_rate_hz', 15.0)
         self.declare_parameter('publish_debug', True)
@@ -80,7 +79,6 @@ class UwbLocalizer(Node):
         self.min_valid = float(g('min_valid_m'))
         self.max_valid = float(g('max_valid_m'))
         self.gate = float(g('innovation_gate_m'))
-        self.max_rejects = int(g('max_consecutive_rejects'))
         self.baseline = float(g('anchor_baseline'))
         self.consist_margin = 0.15
         self.init_stale = float(g('init_stale_s'))
@@ -92,7 +90,6 @@ class UwbLocalizer(Node):
         self.cart = None
         self.last_r = {}          # name -> (range, stamp)
         self.reject_count = 0.0
-        self.consecutive_rejects = 0
 
         self.create_subscription(Odometry, g('odom_topic'), self.on_odom, 20)
         self.create_subscription(Range, g('left_topic'),
@@ -162,8 +159,6 @@ class UwbLocalizer(Node):
         d = np.linalg.norm(aR - aL)
         if d < 1e-3:
             return
-        if abs(rL - rR) > d + self.consist_margin:
-            return
         a = (rL * rL - rR * rR + d * d) / (2.0 * d)
         h2 = rL * rL - a * a
         h = math.sqrt(h2) if h2 > 0.0 else 0.0
@@ -177,24 +172,7 @@ class UwbLocalizer(Node):
         self.x = np.array([p[0], p[1], 0.0, 0.0])
         self.P = np.diag([0.25, 0.25, 1.0, 1.0]).astype(float)
         self.t = now
-        self.consecutive_rejects = 0
         self.get_logger().info("EKF seeded from two-anchor intersection (front).")
-
-    def _reject(self, now, reason):
-        """Count a rejected range and discard an estimate that no longer tracks it."""
-        self.reject_count += 1.0
-        self.consecutive_rejects += 1
-        if self.debug:
-            self.reject_pub.publish(Float32(data=self.reject_count))
-        if self.consecutive_rejects < self.max_rejects:
-            return
-
-        self.get_logger().warn(
-            f"EKF reset after {self.consecutive_rejects} consecutive rejected ranges: {reason}")
-        self.x = None
-        self.P = None
-        self.t = None
-        self.consecutive_rejects = 0
 
     def _predict(self, now):
         if self.x is None or self.t is None:
@@ -234,7 +212,9 @@ class UwbLocalizer(Node):
         if other in self.last_r:
             r_o, t_o = self.last_r[other]
             if (now - t_o).nanoseconds / 1e9 < 0.3 and abs(r - r_o) > self.baseline + self.consist_margin:
-                self._reject(now, 'anchor-range inconsistency')
+                self.reject_count += 1.0
+                if self.debug:
+                    self.reject_pub.publish(Float32(data=self.reject_count))
                 return
 
         self._predict(now)
@@ -247,12 +227,13 @@ class UwbLocalizer(Node):
         H = np.array([[dx / h, dy / h, 0.0, 0.0]], float)
         S = float(H @ self.P @ H.T) + self.R
         if self.gate > 0.0 and abs(yk) > self.gate:
-            self._reject(now, 'innovation gate')
+            self.reject_count += 1.0
+            if self.debug:
+                self.reject_pub.publish(Float32(data=self.reject_count))
             return
         K = (self.P @ H.T) / S
         self.x = self.x + K[:, 0] * yk
         self.P = (np.eye(4) - K @ H) @ self.P
-        self.consecutive_rejects = 0
         self._clamp_velocity()
         self._constrain_front()
         if self.debug:

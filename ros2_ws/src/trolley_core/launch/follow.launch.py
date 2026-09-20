@@ -56,7 +56,8 @@ def generate_launch_description():
              name='uwb_localizer', output='screen',
              parameters=[{'anchor_x': 0.22,                # MEASURED: anchors 22 cm forward of cart centre
                           'anchor_baseline': 0.24,         # MEASURED tip-to-tip (2026-09-14)
-                          'process_accel_std': 0.6}]),
+                          'process_accel_std': 0.6,
+                          'max_valid_m': 3.5}]),   # operate within the ~3.3 m trial area; beyond this the 24 cm-baseline bearing is unreliable (was pivoting on noise at 4.3 m)
         Node(package='trolley_core', executable='follow_controller',
              name='follow_controller', output='screen',
              parameters=[{'use_target': True,

@@ -36,5 +36,5 @@ def generate_launch_description():
                           'left_offset_m': -0.04}]),   # calibrated 2026-09-16 static sweep; left reads +0.04 m long
         Node(package='trolley_core', executable='uwb_localizer',
              name='uwb_localizer', output='screen',
-             parameters=[{'anchor_x': 0.22, 'anchor_baseline': 0.24}]),
+             parameters=[{'anchor_x': 0.22, 'anchor_baseline': 0.24, 'max_valid_m': 3.5}]),
     ])

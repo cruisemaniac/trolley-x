@@ -50,8 +50,8 @@ def generate_launch_description():
              parameters=[{'wheel_track_m': 0.35}]),        # ESTIMATE - measure and replace
         Node(package='trolley_core', executable='uwb_ranging',
              name='uwb_ranging', output='screen',
-             parameters=[{'right_offset_m': -0.20,   # calibrated 2026-09-16 static sweep; raw right reads ~0.20 m long
-                          'left_offset_m': -0.04}]),   # calibrated 2026-09-16 static sweep; left reads +0.04 m long
+             parameters=[{'right_offset_m': -0.126,  # re-calibrated 2026-09-21 at 1.007 m and 2.004 m
+                          'left_offset_m': -0.040}]),
         Node(package='trolley_core', executable='uwb_localizer',
              name='uwb_localizer', output='screen',
              parameters=[{'anchor_x': 0.22,                # MEASURED: anchors 22 cm forward of cart centre

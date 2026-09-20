@@ -166,7 +166,12 @@ class UwbLocalizer(Node):
             return
         a = (rL * rL - rR * rR + d * d) / (2.0 * d)
         h2 = rL * rL - a * a
-        h = math.sqrt(h2) if h2 > 0.0 else 0.0
+        # Do not turn a non-intersection into a tangent solution.  That shortcut
+        # can place the tag far to one side and command a full-speed pivot.
+        # Wait for a pair that has a real two-circle intersection instead.
+        if h2 <= 0.0:
+            return
+        h = math.sqrt(h2)
         ex = (aR - aL) / d
         pm = aL + a * ex
         perp = np.array([-ex[1], ex[0]])

@@ -64,6 +64,7 @@ class UwbLocalizer(Node):
         self.declare_parameter('max_valid_m', 30.0)
         self.declare_parameter('innovation_gate_m', 0.4)  # reject |z-h| bigger than this; 0 = off
         self.declare_parameter('init_stale_s', 0.5)       # both ranges must be this fresh to init
+        self.declare_parameter('starve_timeout_s', 0.5)   # no accepted range this long -> drop filter (no open-loop coast)
         self.declare_parameter('publish_rate_hz', 15.0)
         self.declare_parameter('publish_debug', True)
 
@@ -85,6 +86,7 @@ class UwbLocalizer(Node):
                                      # larger gap is NLOS/glitch. Was 0.15 (0.39 m) - too
                                      # loose: a 0.31 m glitch drove a false pivot.
         self.init_stale = float(g('init_stale_s'))
+        self.starve_timeout = float(g('starve_timeout_s'))
         self.debug = bool(g('publish_debug'))
 
         self.x = None
@@ -93,6 +95,7 @@ class UwbLocalizer(Node):
         self.cart = None
         self.last_r = {}          # name -> (range, stamp)
         self.reject_count = 0.0
+        self.last_accept = None   # stamp of the last ACCEPTED (fused) range
 
         self.create_subscription(Odometry, g('odom_topic'), self.on_odom, 20)
         self.create_subscription(Range, g('left_topic'),
@@ -159,6 +162,8 @@ class UwbLocalizer(Node):
             return
         aL = self._anchor_odom('left'); aR = self._anchor_odom('right')
         rL = fresh['left']; rR = fresh['right']
+        if abs(rL - rR) > self.baseline + self.consist_margin:
+            return                              # impossible pair -> do not seed
         d = np.linalg.norm(aR - aL)
         if d < 1e-3:
             return
@@ -175,6 +180,7 @@ class UwbLocalizer(Node):
         self.x = np.array([p[0], p[1], 0.0, 0.0])
         self.P = np.diag([0.25, 0.25, 1.0, 1.0]).astype(float)
         self.t = now
+        self.last_accept = now
         self.get_logger().info("EKF seeded from two-anchor intersection (front).")
 
     def _predict(self, now):
@@ -239,6 +245,7 @@ class UwbLocalizer(Node):
         self.P = (np.eye(4) - K @ H) @ self.P
         self._clamp_velocity()
         self._constrain_front()
+        self.last_accept = now
         if self.debug:
             self.innov_pub.publish(Float32(data=float(yk)))
             self.nis_pub.publish(Float32(data=float(yk * yk / S)))
@@ -248,6 +255,15 @@ class UwbLocalizer(Node):
         if self.x is None or self.cart is None:
             return
         now = self.get_clock().now()
+        # Starvation guard: if no range has been ACCEPTED for a while, the filter
+        # is coasting open-loop (range runs away). Drop it so we stop publishing a
+        # target -> the controller holds instead of chasing a phantom. The next
+        # consistent two-range pair reseeds it via _try_init.
+        if self.last_accept is not None and \
+           (now - self.last_accept).nanoseconds / 1e9 > self.starve_timeout:
+            self.x = None
+            self.get_logger().warn("UWB starved: no accepted range -> reset (hold).")
+            return
         self._predict(now)
         self._constrain_front()
         px, py = float(self.x[0]), float(self.x[1])

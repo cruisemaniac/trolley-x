@@ -80,7 +80,10 @@ class UwbLocalizer(Node):
         self.max_valid = float(g('max_valid_m'))
         self.gate = float(g('innovation_gate_m'))
         self.baseline = float(g('anchor_baseline'))
-        self.consist_margin = 0.15
+        self.consist_margin = 0.05   # m; reject |rL-rR| beyond baseline+this (~0.29 m).
+                                     # real front-follow |rL-rR| stays under 0.15 m; a
+                                     # larger gap is NLOS/glitch. Was 0.15 (0.39 m) - too
+                                     # loose: a 0.31 m glitch drove a false pivot.
         self.init_stale = float(g('init_stale_s'))
         self.debug = bool(g('publish_debug'))
 

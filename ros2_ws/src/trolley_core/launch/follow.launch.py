@@ -23,17 +23,21 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     lidar = LaunchConfiguration('lidar')
     log = LaunchConfiguration('log')
+    use_target = LaunchConfiguration('use_target')
 
     return LaunchDescription([
         DeclareLaunchArgument('lidar', default_value='true',
                               description='Also start the RPLIDAR A1 driver.'),
         DeclareLaunchArgument('log', default_value='true',
                               description='Also start the CSV data logger.'),
+        DeclareLaunchArgument('use_target', default_value='true',
+                              description='true = UWB+Kalman (fused target); false = raw two-anchor ranges (baseline run).'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -60,7 +64,7 @@ def generate_launch_description():
                           'max_valid_m': 3.5}]),   # operate within the ~3.3 m trial area; beyond this the 24 cm-baseline bearing is unreliable (was pivoting on noise at 4.3 m)
         Node(package='trolley_core', executable='follow_controller',
              name='follow_controller', output='screen',
-             parameters=[{'use_target': True,
+             parameters=[{'use_target': ParameterValue(use_target, value_type=bool),
                           'standoff_m': 0.80,   # stop ~1.1 m EKF range; keeps UWB in its reliable zone
                           'range_offset_m': 0.22}]),   # = anchor_x; gap = EKF range - this
         Node(package='trolley_core', executable='follow_logger',

@@ -51,6 +51,7 @@ class FollowController(Node):
         self.declare_parameter('bearing_deadband_rad', 0.09)  # ignore bearing under ~5 deg (kills hunting)
         self.declare_parameter('pivot_enter_deg', 35.0)   # bearing beyond this -> pivot in place to re-face
         self.declare_parameter('pivot_exit_deg', 15.0)    # pivot until bearing under this (hysteresis)
+        self.declare_parameter('pivot_settle_s', 0.7)     # after (re)acquiring, hold off pivots this long (seed bearing is noisy)
         self.declare_parameter('behind_deg', 100.0)       # bearing beyond this -> tag beside/behind -> stop & wait
         self.declare_parameter('range_jump_m', 1.0)       # EKF range jump between fixes that flags divergence
         self.declare_parameter('reacquire_hold_s', 1.0)   # stay stopped this long after a divergence flag
@@ -79,6 +80,7 @@ class FollowController(Node):
         self.bear_db = float(g('bearing_deadband_rad'))
         self.pivot_enter = math.radians(float(g('pivot_enter_deg')))
         self.pivot_exit = math.radians(float(g('pivot_exit_deg')))
+        self.pivot_settle_s = float(g('pivot_settle_s'))
         self.behind_rad = math.radians(float(g('behind_deg')))
         self.jump_m = float(g('range_jump_m'))
         self.reacq_hold_s = float(g('reacquire_hold_s'))
@@ -101,6 +103,8 @@ class FollowController(Node):
         self.prev_lin = 0.0
         self.prev_ang = 0.0
         self.pivoting = False
+        self.had_target = False
+        self.acquired_t = None
         self.last_rng = None
         self.untrusted_until = None
 
@@ -171,7 +175,13 @@ class FollowController(Node):
         now = self.get_clock().now()
         if not (self._fresh(self.tt) and self.target is not None):
             self.pivoting = False
+            self.had_target = False
             self._publish(0.0, 0.0, 'LOST', None); return
+
+        # target is fresh here: stamp the moment of (re)acquisition for the settle window
+        if not self.had_target:
+            self.acquired_t = now
+            self.had_target = True
 
         bx, by = self.target
         bearing = math.atan2(by, bx)                   # + = tag to the left
@@ -195,16 +205,27 @@ class FollowController(Node):
         heading = 0.0 if ab < self.bear_db else bearing
         ang_cmd = self._clamp(self.k_bearing * heading, -self.max_ang, self.max_ang)
 
+        # Settle window: for a short time after (re)acquiring the tag, the seed
+        # bearing is weak and noisy at this 0.24 m baseline, so do NOT pivot on it.
+        settling = (self.acquired_t is not None and
+                    (now - self.acquired_t).nanoseconds / 1e9 < self.pivot_settle_s)
+
         # Pivot hysteresis: start turning in place at pivot_enter, keep until pivot_exit.
         if self.pivoting:
-            if ab < self.pivot_exit:
+            if ab < self.pivot_exit or settling:
                 self.pivoting = False
-        elif ab > self.pivot_enter:
+        elif ab > self.pivot_enter and not settling:
             self.pivoting = True
 
         if self.pivoting:
             # Too far off the nose to arc: turn in place to re-face, then follow.
             self._publish(0.0, ang_cmd, 'PIVOT', diag); return
+
+        # Still settling but pointing off the nose: creep forward with damped steer
+        # so operator motion sharpens the bearing, instead of spinning on noise.
+        if settling and ab > self.pivot_exit:
+            lin = self._clamp(self.k_lin * max(range_err, 0.0), 0.0, self.max_lin) * self.creep
+            self._publish(lin, ang_cmd * self.creep, 'SETTLE', diag); return
 
         if range_err > self.deadband:
             lin = self._clamp(self.k_lin * range_err, 0.0, self.max_lin)

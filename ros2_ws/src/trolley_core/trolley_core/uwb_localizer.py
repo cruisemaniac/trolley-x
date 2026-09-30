@@ -43,7 +43,7 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Float32
 
-from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR, CRITICAL, error_level
 
 
 class UwbLocalizer(Node):
@@ -264,7 +264,7 @@ class UwbLocalizer(Node):
         self._diag_last_rejects = self.reject_count
         values = {'rejects_total': int(self.reject_count), 'rejects_last_s': int(rejects)}
         if self.cart is None:
-            return ERROR, 'no odometry received', values
+            return ERROR, 'no odometry received', error_level(CRITICAL, values)
         if self.x is None:
             return WARN, 'no fix: waiting for a consistent range from both anchors', values
         if self.last_accept is not None:

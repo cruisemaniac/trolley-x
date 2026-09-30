@@ -32,7 +32,7 @@ import serial
 import threading
 import time
 
-from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR, CRITICAL, FATAL, error_level
 
 
 def _cov(entries):
@@ -135,13 +135,13 @@ class ArduinoBaseController(Node):
         self._diag_last_count = self._telemetry_count
         values = {'port': self.serial_port, 'telemetry_hz': rate, 'unparsed_lines': self._telemetry_unparsed}
         if not (hasattr(self, 'arduino') and self.arduino.is_open):
-            return ERROR, f'serial port {self.serial_port} not open', values
+            return ERROR, f'serial port {self.serial_port} not open', error_level(FATAL, values)
         if self._telemetry_last is None:
             return WARN, 'no telemetry received yet', values
         age = time.monotonic() - self._telemetry_last
         values['telemetry_age_s'] = f'{age:.2f}'
         if age > 0.5:
-            return ERROR, f'no telemetry from the Arduino for {age:.1f} s', values
+            return ERROR, f'no telemetry from the Arduino for {age:.1f} s', error_level(CRITICAL, values)
         return OK, 'telemetry flowing', values
 
     def _diag_gyro(self):

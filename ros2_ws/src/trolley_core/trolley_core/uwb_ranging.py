@@ -27,7 +27,7 @@ from sensor_msgs.msg import Range
 from std_msgs.msg import Float32
 import serial
 
-from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR, CRITICAL, error_level
 
 
 class UwbRanging(Node):
@@ -215,7 +215,7 @@ class UwbRanging(Node):
     def _diag_anchor(self, a):
         values = {'port': a['port'], 'replies_total': a['replies'], 'timeouts_total': a['timeouts']}
         if a['serial'] is None:
-            return ERROR, f"cannot open {a['port']}", values
+            return ERROR, f"cannot open {a['port']}", error_level(CRITICAL, values)
         if a['last_ok'] is None:
             return WARN, 'no reply from the tag yet', values
         age = time.monotonic() - a['last_ok']

@@ -9,6 +9,11 @@ that package on the cart. A node registers named checks; each returns
     self.diag.add('lidar scan', self._diag_scan)
 
 Status names are "<node name>: <check>", matching diagnostic_updater.
+
+ROS levels say something is wrong, not what the cart can still do. Where a
+check knows, it says so with a VDA 5050 errorLevel in its values:
+
+    return ERROR, 'scan stale; holding STOP', error_level(CRITICAL, values)
 """
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -17,6 +22,17 @@ OK = DiagnosticStatus.OK
 WARN = DiagnosticStatus.WARN
 ERROR = DiagnosticStatus.ERROR
 STALE = DiagnosticStatus.STALE
+
+# VDA 5050 errorLevel: what the cart can still do.
+WARNING = 'WARNING'    # no immediate attention needed; carries on
+URGENT = 'URGENT'      # needs attention now; carries on
+CRITICAL = 'CRITICAL'  # needs attention now; cannot carry on with this job
+FATAL = 'FATAL'        # someone has to intervene; cannot take a job at all
+
+
+def error_level(level, values=None):
+    """Return values with the VDA 5050 errorLevel added."""
+    return {**(values or {}), 'errorLevel': level}
 
 
 class Diagnostics:

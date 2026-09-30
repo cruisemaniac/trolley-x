@@ -8,7 +8,7 @@ from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 
-from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR, CRITICAL, error_level
 
 
 class SafetyBrakingNode(Node):
@@ -147,10 +147,10 @@ class SafetyBrakingNode(Node):
     def _diag_scan(self):
         age = self._age(self.last_scan_time)
         if age is None:
-            return ERROR, 'no scan received; holding STOP', {}
+            return ERROR, 'no scan received; holding STOP', error_level(CRITICAL)
         values = {'scan_age_s': f'{age:.2f}', 'timeout_s': self.scan_timeout}
         if age > self.scan_timeout:
-            return ERROR, f'scan stale for {age:.1f} s; holding STOP', values
+            return ERROR, f'scan stale for {age:.1f} s; holding STOP', error_level(CRITICAL, values)
         return OK, 'scan fresh', values
 
     def _diag_zone(self):

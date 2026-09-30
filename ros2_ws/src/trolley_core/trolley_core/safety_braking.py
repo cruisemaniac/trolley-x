@@ -8,6 +8,8 @@ from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+
 
 class SafetyBrakingNode(Node):
     def __init__(self):
@@ -63,6 +65,11 @@ class SafetyBrakingNode(Node):
         self.cmd_pub = self.create_publisher(Twist, g('cmd_vel_topic'), 10)
         self.state_pub = self.create_publisher(String, g('safety_state_topic'), 10)
         self.create_timer(1.0 / float(g('publish_rate_hz')), self.on_timer)
+
+        self.diag = Diagnostics(self)
+        self.diag.add('lidar scan', self._diag_scan)
+        self.diag.add('obstacle zone', self._diag_zone)
+        self.diag.add('motion request', self._diag_request)
 
         self.get_logger().info(
             f"Sectorized safety active. zones stop<={self.stop_d} "
@@ -130,6 +137,41 @@ class SafetyBrakingNode(Node):
         if stamp is None:
             return True
         return (self.get_clock().now() - stamp).nanoseconds / 1e9 > timeout
+
+    # ---- diagnostics ----
+    def _age(self, stamp):
+        if stamp is None:
+            return None
+        return (self.get_clock().now() - stamp).nanoseconds / 1e9
+
+    def _diag_scan(self):
+        age = self._age(self.last_scan_time)
+        if age is None:
+            return ERROR, 'no scan received; holding STOP', {}
+        values = {'scan_age_s': f'{age:.2f}', 'timeout_s': self.scan_timeout}
+        if age > self.scan_timeout:
+            return ERROR, f'scan stale for {age:.1f} s; holding STOP', values
+        return OK, 'scan fresh', values
+
+    def _diag_zone(self):
+        values = {'state': self.state,
+                  'front_m': f"{self.sect['FRONT']:.2f}", 'rear_m': f"{self.sect['REAR']:.2f}",
+                  'left_m': f"{self.sect['LEFT']:.2f}", 'right_m': f"{self.sect['RIGHT']:.2f}"}
+        if self._stale(self.last_scan_time, self.scan_timeout):
+            return WARN, 'unknown: no fresh scan', values
+        if self.state == 'STOP':
+            # The safety system doing its job, not a fault: WARN, not ERROR.
+            return WARN, f'STOP: obstacle at {self.min_dist:.2f} m', values
+        return OK, self.state, values
+
+    def _diag_request(self):
+        age = self._age(self.last_request_time)
+        if age is None:
+            return WARN, 'no motion request received', {}
+        values = {'request_age_s': f'{age:.2f}', 'timeout_s': self.cmd_timeout}
+        if age > self.cmd_timeout:
+            return WARN, f'no motion request for {age:.1f} s', values
+        return OK, 'receiving motion requests', values
 
     def _limit(self, linear, sector_dist):
         # apply the zone for one direction; returns limited linear.x

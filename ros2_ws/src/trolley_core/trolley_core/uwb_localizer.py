@@ -43,6 +43,8 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Float32
 
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+
 
 class UwbLocalizer(Node):
     def __init__(self):
@@ -108,6 +110,12 @@ class UwbLocalizer(Node):
         self.nis_pub = self.create_publisher(Float32, '/uwb/nis', 10)
         self.reject_pub = self.create_publisher(Float32, '/uwb/reject_count', 10)
         self.create_timer(1.0 / float(g('publish_rate_hz')), self.on_timer)
+
+        self._diag_last_rejects = 0.0
+        self.diag = Diagnostics(self)
+        self.diag.add('tracking', self._diag_tracking)
+        self.diag.add('anchor left', lambda: self._diag_anchor('left'))
+        self.diag.add('anchor right', lambda: self._diag_anchor('right'))
         self.get_logger().info("UWB localizer (EKF v3: two-anchor init + front constraint) active.")
 
     # ---- odom + geometry ----
@@ -249,6 +257,32 @@ class UwbLocalizer(Node):
         if self.debug:
             self.innov_pub.publish(Float32(data=float(yk)))
             self.nis_pub.publish(Float32(data=float(yk * yk / S)))
+
+    # ---- diagnostics ----
+    def _diag_tracking(self):
+        rejects = self.reject_count - self._diag_last_rejects
+        self._diag_last_rejects = self.reject_count
+        values = {'rejects_total': int(self.reject_count), 'rejects_last_s': int(rejects)}
+        if self.cart is None:
+            return ERROR, 'no odometry received', values
+        if self.x is None:
+            return WARN, 'no fix: waiting for a consistent range from both anchors', values
+        if self.last_accept is not None:
+            values['accept_age_s'] = f'{(self.get_clock().now() - self.last_accept).nanoseconds / 1e9:.2f}'
+        values['target_range_m'] = f'{math.hypot(self.x[0] - self.cart[0], self.x[1] - self.cart[1]):.2f}'
+        if rejects >= 3:
+            return WARN, f'rejecting ranges ({int(rejects)} in the last second)', values
+        return OK, 'tracking', values
+
+    def _diag_anchor(self, name):
+        if name not in self.last_r:
+            return WARN, 'no valid range received', {}
+        r, stamp = self.last_r[name]
+        age = (self.get_clock().now() - stamp).nanoseconds / 1e9
+        values = {'range_m': f'{r:.2f}', 'range_age_s': f'{age:.2f}'}
+        if age > self.init_stale:
+            return WARN, f'no valid range for {age:.1f} s', values
+        return OK, 'ranging', values
 
     # ---- output ----
     def on_timer(self):

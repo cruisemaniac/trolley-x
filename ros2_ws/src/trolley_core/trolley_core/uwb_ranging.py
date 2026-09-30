@@ -27,6 +27,8 @@ from sensor_msgs.msg import Range
 from std_msgs.msg import Float32
 import serial
 
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
+
 
 class UwbRanging(Node):
     def __init__(self):
@@ -86,6 +88,10 @@ class UwbRanging(Node):
             for a in self.anchors:
                 self._configure(a)
 
+        self.diag = Diagnostics(self)
+        for a in self.anchors:
+            self.diag.add(f"anchor {a['name']}", lambda a=a: self._diag_anchor(a))
+
         self._stop = False
         self.worker = threading.Thread(target=self._loop, daemon=True)
         self.worker.start()
@@ -105,6 +111,8 @@ class UwbRanging(Node):
             'frame': frame, 'serial': ser, 'offset': offset,
             'pub': self.create_publisher(Range, topic, 10),
             'rssi_pub': self.create_publisher(Float32, topic + '/rssi', 10),
+            # bookkeeping for diagnostics (written by the ranging thread)
+            'replies': 0, 'timeouts': 0, 'last_ok': None, 'last_m': None, 'last_rssi': None,
         }
 
     def _send_expect_ok(self, ser, cmd, timeout=0.5):
@@ -204,10 +212,27 @@ class UwbRanging(Node):
         if rssi is not None:
             a['rssi_pub'].publish(Float32(data=float(rssi)))
 
+    def _diag_anchor(self, a):
+        values = {'port': a['port'], 'replies_total': a['replies'], 'timeouts_total': a['timeouts']}
+        if a['serial'] is None:
+            return ERROR, f"cannot open {a['port']}", values
+        if a['last_ok'] is None:
+            return WARN, 'no reply from the tag yet', values
+        age = time.monotonic() - a['last_ok']
+        values.update({'range_m': f"{a['last_m']:.2f}", 'rssi': a['last_rssi'], 'reply_age_s': f'{age:.2f}'})
+        if age > 1.0:
+            return WARN, f'no reply from the tag for {age:.1f} s', values
+        return OK, 'ranging', values
+
     def _loop(self):
         while rclpy.ok() and not self._stop:
             for a in self.anchors:
                 d, rssi = self.range_once(a)
+                if d is None:
+                    a['timeouts'] += 1
+                else:
+                    a['replies'] += 1
+                    a['last_ok'], a['last_m'], a['last_rssi'] = time.monotonic(), d, rssi
                 if d is not None and self.range_min < d < self.range_max:
                     self._publish(a, d, rssi)
             time.sleep(self.poll_period)

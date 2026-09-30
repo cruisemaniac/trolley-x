@@ -30,6 +30,9 @@ from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
 import serial
 import threading
+import time
+
+from trolley_core.diagnostics import Diagnostics, OK, WARN, ERROR
 
 
 def _cov(entries):
@@ -111,11 +114,41 @@ class ArduinoBaseController(Node):
         self.bias_count = 0
         self.calibrated = False
 
+        # telemetry bookkeeping for diagnostics (written by the read thread)
+        self._telemetry_count = 0
+        self._telemetry_last = None
+        self._telemetry_unparsed = 0
+        self._diag_last_count = 0
+        self.diag = Diagnostics(self)
+        self.diag.add('serial link', self._diag_serial)
+        self.diag.add('gyro calibration', self._diag_gyro)
+
         self.read_thread = threading.Thread(target=self.read_telemetry, daemon=True)
         self.read_thread.start()
         self.get_logger().info(
             f"Base controller (differential). track {self.track} m, "
             f"wheel_max {self.wheel_max_mps:.2f} m/s -> pwm {self.max_pwm}")
+
+    # ---- diagnostics ----
+    def _diag_serial(self):
+        rate = self._telemetry_count - self._diag_last_count  # lines in the last second
+        self._diag_last_count = self._telemetry_count
+        values = {'port': self.serial_port, 'telemetry_hz': rate, 'unparsed_lines': self._telemetry_unparsed}
+        if not (hasattr(self, 'arduino') and self.arduino.is_open):
+            return ERROR, f'serial port {self.serial_port} not open', values
+        if self._telemetry_last is None:
+            return WARN, 'no telemetry received yet', values
+        age = time.monotonic() - self._telemetry_last
+        values['telemetry_age_s'] = f'{age:.2f}'
+        if age > 0.5:
+            return ERROR, f'no telemetry from the Arduino for {age:.1f} s', values
+        return OK, 'telemetry flowing', values
+
+    def _diag_gyro(self):
+        values = {'gyro_bias': f'{self.gyro_bias:.4f}'}
+        if not self.calibrated:
+            return WARN, 'calibrating gyro bias; keep the cart still', values
+        return OK, 'calibrated', values
 
     # ---- drive ----
     def cmd_vel_callback(self, msg):
@@ -170,12 +203,15 @@ class ArduinoBaseController(Node):
                 continue
             parts = line.split(',')
             if len(parts) != 4:
+                self._telemetry_unparsed += 1
                 self.get_logger().debug(f"telemetry (unparsed): [{line}]")
                 continue
             try:
                 left, right, accel_x, gyro_z = (float(p) for p in parts)
             except ValueError:
                 continue
+            self._telemetry_count += 1
+            self._telemetry_last = time.monotonic()
             now = self.get_clock().now()
             self._publish_imu(now, accel_x, gyro_z)
             if self.publish_odom:

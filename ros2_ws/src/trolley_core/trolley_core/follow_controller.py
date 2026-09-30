@@ -28,6 +28,8 @@ from sensor_msgs.msg import Range
 from geometry_msgs.msg import Twist, PointStamped
 from rclpy.duration import Duration
 
+from trolley_core.diagnostics import Diagnostics, OK, WARN
+
 
 class FollowController(Node):
     def __init__(self):
@@ -114,6 +116,9 @@ class FollowController(Node):
         self.pub = self.create_publisher(Twist, g('output_topic'), 10)
         self.create_timer(self.dt, self.on_timer)
 
+        self.diag = Diagnostics(self)
+        self.diag.add('state', self._diag_state)
+
         mode = 'EKF target' if self.use_target else 'raw ranges'
         self.get_logger().info(
             f"Follow controller v2 active ({mode}). standoff {self.standoff} m -> {g('output_topic')}")
@@ -163,6 +168,16 @@ class FollowController(Node):
         cmd.angular.z = float(ang)
         self.pub.publish(cmd)
         self._log(state, diag)
+
+    def _diag_state(self):
+        values = {'state': self.state, 'linear_mps': f'{self.prev_lin:.2f}', 'angular_rps': f'{self.prev_ang:.2f}'}
+        if self.state == 'LOST':
+            return WARN, 'LOST: no fix on the operator, stopped', values
+        if self.state == 'REACQUIRE':
+            return WARN, 'REACQUIRE: estimate jumped, stopped until it settles', values
+        if self.state == 'INIT':
+            return WARN, 'starting', values
+        return OK, self.state, values
 
     def on_timer(self):
         if self.use_target:
